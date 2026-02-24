@@ -29,6 +29,8 @@
   const hpTxt = document.getElementById("hpTxt");
   const shTxt = document.getElementById("shTxt");
   const xpTxt = document.getElementById("xpTxt");
+  const tokenFill = document.getElementById("tokenFill");
+  const tokenTxt = document.getElementById("tokenTxt");
 
   const tTag = document.getElementById("tTag");
   const kTag = document.getElementById("kTag");
@@ -64,18 +66,83 @@
 
   // ========= Audio =========
   let audioCtx=null;
-  let audioOn=true;
+  let musicVol = Math.min(1, Math.max(0, +(localStorage.getItem("affixloot_music_vol")||0.28)));
+  let sfxVol = Math.min(1, Math.max(0, +(localStorage.getItem("affixloot_sfx_vol")||1)));
+  let menuMusic=null;
+  let menuMusicStartedOnce=false;
+  let runMusic=null;
+
+  function stopMenuMusic(){
+    if(!menuMusic) return;
+    menuMusic.pause();
+    menuMusic.currentTime = 0;
+  }
+
+  function applyMusicVolume(){
+    const v = musicVol;
+    if(menuMusic) menuMusic.volume = v;
+    if(runMusic) runMusic.volume = v;
+  }
+
+  function getVolumeControlsHTML(){
+    const m = Math.round(musicVol*100);
+    const s = Math.round(sfxVol*100);
+    return `
+      <div class="volumeControlRow">
+        <label class="volumeLabel">Music</label>
+        <input type="range" id="volumeMusic" min="0" max="100" value="${m}" class="volumeSlider"/>
+        <span class="volumePct" id="volumeMusicPct">${m}%</span>
+      </div>
+      <div class="volumeControlRow">
+        <label class="volumeLabel">Sound effects</label>
+        <input type="range" id="volumeSfx" min="0" max="100" value="${s}" class="volumeSlider"/>
+        <span class="volumePct" id="volumeSfxPct">${s}%</span>
+      </div>
+    `;
+  }
+  function attachVolumeListeners(container){
+    const musicSl = container.querySelector("#volumeMusic");
+    const sfxSl = container.querySelector("#volumeSfx");
+    const musicPct = container.querySelector("#volumeMusicPct");
+    const sfxPct = container.querySelector("#volumeSfxPct");
+    if(musicSl){
+      musicSl.oninput = ()=>{
+        musicVol = musicSl.value/100;
+        localStorage.setItem("affixloot_music_vol", String(musicVol));
+        if(musicPct) musicPct.textContent = Math.round(musicVol*100)+"%";
+        applyMusicVolume();
+        if(menuMusic && musicVol>0) menuMusic.play().catch(()=>{});
+        if(runMusic && musicVol>0) runMusic.play().catch(()=>{});
+      };
+    }
+    if(sfxSl){
+      sfxSl.oninput = ()=>{
+        sfxVol = sfxSl.value/100;
+        localStorage.setItem("affixloot_sfx_vol", String(sfxVol));
+        if(sfxPct) sfxPct.textContent = Math.round(sfxVol*100)+"%";
+        if(sfxVol>0) beep({freq:600,dur:0.04,type:"sine",gain:0.04});
+      };
+    }
+  }
+
+  (function initMenuMusic(){
+    menuMusic = new Audio("assets/audio/Main Menu.mp3");
+    menuMusic.loop = true;
+    menuMusic.preload = "auto";
+    menuMusic.load();
+  })();
   function ensureAudio(){
     if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
     if(audioCtx.state==="suspended") audioCtx.resume();
   }
   function beep({freq=440, dur=0.06, type="sine", gain=0.06, slide=0, noise=false}={}){  // tiny synth
-    if(!audioOn) return;
+    if(sfxVol<=0) return;
     ensureAudio();
+    const gainMul = Math.max(0.0001, gain * sfxVol);
     const t0 = audioCtx.currentTime;
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain, t0+0.01);
+    g.gain.exponentialRampToValueAtTime(gainMul, t0+0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
 
     if(noise){
@@ -110,6 +177,16 @@
     beep({freq: 440, dur:0.20, type:"triangle", gain:0.05, slide:1.15});
     beep({noise:true, dur:0.06, gain:0.02});
   }
+  function levelUpExplosionSound(){
+    beep({freq: 90, dur:0.12, type:"sawtooth", gain:0.055, slide:0.4});
+    beep({noise:true, dur:0.07, gain:0.025});
+  }
+  function victorySuckFanfare(){
+    beep({freq: 523, dur:0.10, type:"triangle", gain:0.06});
+    beep({freq: 659, dur:0.12, type:"triangle", gain:0.06, slide:1.02});
+    beep({freq: 784, dur:0.14, type:"triangle", gain:0.055, slide:1.02});
+    beep({freq: 1047, dur:0.18, type:"sine", gain:0.05, slide:0.98});
+  }
 
   // ========= Rarity =========
   const RAR = {
@@ -124,13 +201,13 @@
   const BASE = {
     playerR: 12,
     hp: 100,
-    speed: 190,
-    dashSpeed: 530,
+    speed: 285,        // 190 * 1.5
+    dashSpeed: 795,    // 530 * 1.5
     dashDur: 0.10,
     dashCD: 0.90,
 
-    baseDmg: 10,
-    baseAtk: 0.37,      // slightly slower
+    baseDmg: 8,
+    baseAtk: 0.52,     // slower start so first weapon is always an upgrade
     bulletSpeed: 540,
     bulletLife: 0.95,
 
@@ -139,16 +216,23 @@
     lootDropBase: 0.09,
     lootDropElite: 0.30,
 
-    roundSeconds: 300,
+    roundSeconds: 150,   // 2 min 30 s
 
-    bossApproachAt: 115,
-    bossSpawnAt: 125,
+    minibossApproachAt: 70,
+    minibossSpawnAt: 75,
+    bossApproachAt: 145,
+    bossSpawnAt: 150,
   };
 
   // ========= Inputs =========
   const keys=new Set();
   addEventListener("keydown",(e)=>{
     const k=e.key.toLowerCase();
+    if(victoryPhase && (e.key==="Escape" || k==="m")){
+      e.preventDefault();
+      showVictoryEndScreen();
+      return;
+    }
     if(["w","a","s","d","arrowup","arrowleft","arrowdown","arrowright"," "].includes(k) || e.key===" ") e.preventDefault();
     if(k==="p" && running){ togglePause(); return; }
     keys.add(k===" " ? "space" : k);
@@ -183,6 +267,7 @@
     {id:"slowAura", name:"Frost Aura",icon:"🧊", kind:["armor","ring","jewel"], min:6,  max:14, fmt:v=>`-${v}% enemy speed aura`},
     {id:"thorns",   name:"Thorns",    icon:"🌵", kind:["armor","ring"],          min:10, max:26, fmt:v=>`+${v}% thorns`},
     {id:"xpGain",   name:"Wisdom",    icon:"🧠", kind:["jewel"],                min:6,  max:18, fmt:v=>`+${v}% XP gain`},
+    {id:"lootInvuln",name:"Loot Ward", icon:"✨", kind:["armor","ring"],         min:0.2, max:2,  fmt:v=>`+${v.toFixed(1)}s invuln after loot`},
   ];
 
   // ========= Stats meta =========
@@ -202,6 +287,7 @@
     {k:"thorns",    label:"Thorns",      icon:"🌵", fmt:v=>`${Math.round(v*100)}%`},
     {k:"shieldRegenPct", label:"Shield Regen", icon:"✨", fmt:v=>`${Math.round(v*100)}%`},
     {k:"xpGainPct", label:"XP Gain",     icon:"🧠", fmt:v=>`${Math.round(v*100)}%`},
+    {k:"lootInvulnSec", label:"Loot invuln", icon:"✨", fmt:v=>`${(1+v).toFixed(1)}s`},
   ];
 
   // ========= State =========
@@ -231,33 +317,54 @@
     slowAura:0,
     thorns:0,
     xpGainPct:0,
+    lootInvulnSec:0,
 
     dashT:0,
     dashCD:0,
+    dashIx:0,
+    dashIy:0,
 
     xp:0,
     level:1,
     xpNeed:BASE.xpNeed,
 
     dpsEst:0,
+    levelBonuses:{},
   };
 
   let equipped = {weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
 
-  let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[];
+  let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
   let kills=0, lootCount=0, streak=0, streakT=0;
   let threat=1.0, spawnAcc=0, atkCD=0;
 
   // Boss control
-  let bossWarned=false, bossSpawned=false;
+  let minibossWarned=false, minibossSpawned=false, bossWarned=false, bossSpawned=false;
+  let roundEnd=false, victoryPhase=false;
+  let victorySuckAt=0;   // when to start sucking loot/XP (now + 2s when last enemy dies)
+  let suckActive=false;  // strong pull on orbs and loot toward player
 
   // High score
   let hiBestTime = +localStorage.getItem("affixloot_best_time") || 0;
   let hiBestKills = +localStorage.getItem("affixloot_best_kills") || 0;
 
-  // Compare modal state
+  // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
+  let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
+  let skillLevels = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_skill_levels");
+      if(!raw) return {};
+      const o = JSON.parse(raw);
+      return typeof o==="object" ? o : {};
+    } catch(e){ return {}; }
+  })();
+  let runTotalXp = 0;
+  let tokenBarProgress = 0; // 0..1000, grant 1 token at 1000 then reset
+  let tokenPops = []; // { x, y, t, life } world coords, drawn above player
   let pendingLoot=null;
   let inCompare=false;
+  let compareSelectionIndex=0;  // 0 = left (keep current), 1 = right (equip new)
+  let compareLeftCardRef=null, compareRightCardRef=null;
 
   // ========= NEW: Compare input gating + 1s lock =========
   const CHOOSE_KEYS = ["arrowleft","arrowright","a","d"]; // accept/keep
@@ -366,6 +473,16 @@
   }
 
   // ========= Build computation =========
+  function getPermanentBonuses(){
+    const pb = {};
+    const valPerLevel = (id, L)=>(id==="lootInvuln" ? L*0.2 : L);
+    for(const a of AFFIX_POOL){
+      const L = skillLevels[a.id]||0;
+      if(L<=0) continue;
+      pb[a.id] = valPerLevel(a.id, L);
+    }
+    return pb;
+  }
   function computeStats(eq){
     const s = {
       maxHP: BASE.hp,
@@ -385,6 +502,7 @@
       slowAura: 0,
       thorns: 0,
       xpGainPct: 0,
+      lootInvulnSec: 0,
     };
 
     if(eq.weapon){
@@ -402,7 +520,21 @@
 
     let dmgPct=0, asPct=0, msPct=0, regenPct=0, critAdd=0, critDmgPct=0;
     let splashPct=0, lsPct=0, slowPct=0, thornsPct=0, xpPct=0;
-    let hpFlat=0, shieldFlat=0, pickupFlat=0, pierceAdd=0;
+    let hpFlat=0, shieldFlat=0, pickupFlat=0, pierceAdd=0, lootInvulnSec=0;
+
+    const lb=player.levelBonuses||{};
+    dmgPct+=lb.dmgPct||0; asPct+=lb.asPct||0; msPct+=lb.msPct||0; regenPct+=lb.regenPct||0;
+    critAdd+=(lb.critPct||0)/100; critDmgPct+=(lb.critDmg||0)/100; splashPct+=(lb.splash||0)/100;
+    lsPct+=(lb.lifesteal||0)/100; slowPct+=(lb.slowAura||0)/100; thornsPct+=(lb.thorns||0)/100;
+    xpPct+=(lb.xpGain||0)/100;
+
+    const pb=getPermanentBonuses();
+    dmgPct+=pb.dmgPct||0; asPct+=pb.asPct||0; msPct+=pb.msPct||0; regenPct+=pb.regenPct||0;
+    critAdd+=(pb.critPct||0)/100; critDmgPct+=(pb.critDmg||0)/100; splashPct+=(pb.splash||0)/100;
+    lsPct+=(pb.lifesteal||0)/100; slowPct+=(pb.slowAura||0)/100; thornsPct+=(pb.thorns||0)/100;
+    xpPct+=(pb.xpGain||0)/100;
+    hpFlat+=pb.hpFlat||0; shieldFlat+=pb.shieldFlat||0; pickupFlat+=pb.pickup||0;
+    pierceAdd+=pb.pierce||0; lootInvulnSec+=pb.lootInvuln||0;
 
     const items=[eq.weapon,eq.armor,eq.ring1,eq.ring2,eq.jewel].filter(Boolean);
     for(const it of items){
@@ -423,6 +555,7 @@
           case "shieldFlat": shieldFlat += a.value; break;
           case "pickup": pickupFlat += a.value; break;
           case "pierce": pierceAdd += a.value; break;
+          case "lootInvuln": lootInvulnSec += a.value; break;
         }
       }
     }
@@ -446,6 +579,7 @@
 
     s.xpGainPct += xpPct;
     s.xpGainPct = Math.max(0, s.xpGainPct);
+    s.lootInvulnSec = Math.min(2, lootInvulnSec);
     return s;
   }
   function estimateDPS(s){
@@ -471,6 +605,8 @@
     player.slowAura=s.slowAura;
     player.thorns=s.thorns;
     player.xpGainPct=s.xpGainPct;
+    player.lootInvulnSec=s.lootInvulnSec;
+    player.lootInvulnSec=s.lootInvulnSec;
 
     if(prevMaxHP>0){
       const pct=clamp(player.hp/prevMaxHP,0,1);
@@ -480,7 +616,7 @@
     if(prevMaxSh>0){
       const pct=clamp(player.shield/prevMaxSh,0,1);
       player.shield=clamp(pct*player.maxShield,0,player.maxShield);
-    } else player.shield=clamp(player.shield,0,player.maxShield);
+    } else player.shield=player.maxShield; // starting shield 100%
 
     player.dpsEst=estimateDPS(s);
   }
@@ -517,6 +653,22 @@
   }
 
   // ========= Toast =========
+  function showLevelUpToast(affixName, valuePct){
+    const div=document.createElement("div");
+    div.className="toastItem";
+    const c=cssVar("--xp");
+    div.innerHTML=`
+      <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+        <div style="width:38px;height:38px;border-radius:14px;display:flex;align-items:center;justify-content:center;border:1px solid ${c}66;background:rgba(0,0,0,.2);font-size:20px;">⬆️</div>
+        <div style="min-width:0;">
+          <div style="font-weight:950; color:${c};">LVL UP</div>
+          <div style="font-size:12px;color:rgba(234,242,255,.85);">${affixName} +${valuePct}%</div>
+        </div>
+      </div>
+    `;
+    toast.prepend(div);
+    setTimeout(()=>div.remove(), 2800);
+  }
   function showToast(it, textOverride=null){
     const c = RAR[it.rarity]?.color || "rgba(255,255,255,.6)";
     const div=document.createElement("div");
@@ -558,9 +710,9 @@
     }
     return "Base: —";
   }
-  function renderCompareCard(item, slotKey, header){
+  function renderCompareCard(item, slotKey, header, statDiffs, isSelected){
     const wrap=document.createElement("div");
-    wrap.className="compareCard";
+    wrap.className="compareCard" + (isSelected ? " compareSelected" : " compareBlur");
     const it=item||previewItem(slotKey);
     const c=item ? RAR[it.rarity].color : "rgba(255,255,255,.55)";
     const rarTxt=item ? rarityLabel(it.rarity) : "—";
@@ -568,6 +720,15 @@
     const affHTML = it.affixes?.length
       ? it.affixes.map(a=>`<span class="pill">${a.icon} ${a.text}</span>`).join("")
       : `<span class="pill" style="opacity:.6;">No affixes</span>`;
+
+    let diffHTML = "";
+    if(statDiffs && statDiffs.length){
+      diffHTML = '<div class="cmpDiffs">' + statDiffs.map(d=>{
+        const cls = d.good ? "cmpDiffGood" : "cmpDiffBad";
+        return `<div class="cmpDiffLine ${cls}">${d.label} ${d.fmt}</div>`;
+      }).join("") + "</div>";
+    }
+
     wrap.innerHTML=`
       <div class="cmpTop">
         <div class="cmpName">${header}</div>
@@ -579,10 +740,52 @@
           <div style="font-weight:1000; color:${c}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.name}</div>
           <div class="cmpLine">${it.type.toUpperCase()} • ${baseLine}</div>
           <div class="pillRow">${affHTML}</div>
+          ${diffHTML}
         </div>
       </div>
     `;
     return wrap;
+  }
+  function getStatDiffs(sA, sB){
+    const lowerBetter=new Set(["atkRate"]);
+    const rows=[];
+    const fmtDelta=(meta, d)=>{
+      if(meta.k==="atkRate") return (d>0?"+":"")+d.toFixed(2).replace(".",",")+"s";
+      if(meta.k==="lootInvulnSec") return (d>0?"+":"")+d.toFixed(1).replace(".",",")+"s";
+      if(["crit","lifesteal","slowAura","thorns","shieldRegenPct","xpGainPct"].includes(meta.k)) return (d>0?"+":"")+Math.round(d*100)+"%";
+      if(meta.k==="critDmg"||meta.k==="splash") return (d>0?"+":"")+Math.round(d*100)+"%";
+      return (d>0?"+":"")+Math.round(d);
+    };
+    for(const meta of STAT_KEYS){
+      const a=sA[meta.k], b=sB[meta.k];
+      const d=b-a;
+      if(Math.abs(d)<1e-9) continue;
+      const goodForB = lowerBetter.has(meta.k) ? (d<0) : (d>0);
+      rows.push({
+        meta,
+        label: meta.icon+" "+meta.label,
+        deltaA: a-b,
+        deltaB: d,
+        fmtA: fmtDelta(meta, a-b),
+        fmtB: fmtDelta(meta, d),
+        goodA: lowerBetter.has(meta.k) ? (a-b<0) : (a-b>0),
+        goodB: goodForB
+      });
+    }
+    const dpsA=estimateDPS(sA), dpsB=estimateDPS(sB), dd=dpsB-dpsA;
+    if(Math.abs(dd)>=1e-6){
+      rows.push({
+        meta: {k:"dps", label:"DPS (est.)", icon:"⚔️"},
+        label: "⚔️ DPS (est.)",
+        deltaA: dpsA-dpsB,
+        deltaB: dd,
+        fmtA: (dpsA-dpsB>0?"+":"")+Math.round(dpsA-dpsB),
+        fmtB: (dd>0?"+":"")+Math.round(dd),
+        goodA: dpsA>dpsB,
+        goodB: dd>0
+      });
+    }
+    return rows;
   }
   function renderStatsTable(sA,sB){
     const wrap=document.createElement("div");
@@ -642,39 +845,38 @@
     const {slotKey, currentItem, newItem} = pendingLoot;
     overlay.classList.remove("hidden");
     if(ovHead) ovHead.style.display="";
-    ovTitle.textContent = `Loot Found — Choose (${slotKey.toUpperCase()})`;
-    ovSub.innerHTML = `Spillet er pauset. Velg: <span class="keycap">←</span>/<span class="keycap">A</span> keep • <span class="keycap">→</span>/<span class="keycap">D</span> equip.`;
+    ovTitle.textContent = "Loot — use arrow keys to choose";
+    ovSub.innerHTML = `←/→ select box • <span class="keycap">E</span> confirm`;
 
     ovBtns.innerHTML="";
-    const equipBtn=document.createElement("button");
-    equipBtn.textContent="Equip new";
-    equipBtn.onclick=()=>{ ensureAudio(); beep({freq:760,dur:0.07,type:"triangle",gain:0.06,slide:0.8}); acceptCompare(true); };
-    const keepBtn=document.createElement("button");
-    keepBtn.textContent="Keep current";
-    keepBtn.onclick=()=>{ ensureAudio(); beep({freq:540,dur:0.06,type:"triangle",gain:0.05}); acceptCompare(false); };
-    const discardBtn=document.createElement("button");
-    discardBtn.textContent="Discard new";
-    discardBtn.onclick=()=>{ ensureAudio(); beep({freq:220,dur:0.08,type:"sawtooth",gain:0.05}); acceptCompare(false,true); };
-    ovBtns.appendChild(equipBtn);
-    ovBtns.appendChild(keepBtn);
-    ovBtns.appendChild(discardBtn);
 
     const eqA={...equipped};
     const eqB={...equipped};
     eqB[slotKey]=newItem;
-
     const sA=computeStats(eqA);
     const sB=computeStats(eqB);
+    const diffs=getStatDiffs(sA,sB);
+    const leftDiffs=diffs.map(d=>({ label: d.label, fmt: d.fmtA, good: d.goodA }));
+    const rightDiffs=diffs.map(d=>({ label: d.label, fmt: d.fmtB, good: d.goodB }));
 
+    compareSelectionIndex=0;
     ovBody.innerHTML="";
     const grid=document.createElement("div");
-    grid.className="ovGrid";
-    grid.appendChild(renderCompareCard(currentItem,slotKey,"Current"));
-    grid.appendChild(renderCompareCard(newItem,slotKey,"New"));
+    grid.className="ovGrid ovGridCompare";
+    compareLeftCardRef=renderCompareCard(currentItem,slotKey,"Current (left)",leftDiffs, true);
+    compareRightCardRef=renderCompareCard(newItem,slotKey,"New (right)",rightDiffs, false);
+    grid.appendChild(compareLeftCardRef);
+    grid.appendChild(compareRightCardRef);
     ovBody.appendChild(grid);
-    ovBody.appendChild(renderStatsTable(sA,sB));
 
     beginCompareInputGate();
+  }
+  function updateCompareSelection(){
+    if(!compareLeftCardRef || !compareRightCardRef) return;
+    compareLeftCardRef.classList.toggle("compareSelected", compareSelectionIndex===0);
+    compareLeftCardRef.classList.toggle("compareBlur", compareSelectionIndex!==0);
+    compareRightCardRef.classList.toggle("compareSelected", compareSelectionIndex===1);
+    compareRightCardRef.classList.toggle("compareBlur", compareSelectionIndex!==1);
   }
 
   function beepLoot(r){
@@ -695,6 +897,8 @@
       recomputeBuild();
       renderEquipMini();
       showToast(it);
+      const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+      player.invuln = Math.max(player.invuln, invulnDur);
       if(it.rarity==="legendary"){ spawnLegendaryBurst(player.x,player.y,false); powerUpLegendary(); }
       else beepLoot(it.rarity);
     } else {
@@ -703,8 +907,11 @@
 
     pendingLoot=null;
     inCompare=false;
+    compareLeftCardRef=null;
+    compareRightCardRef=null;
     overlay.classList.add("hidden");
     paused=false;
+    if(runMusic && musicVol>0){ applyMusicVolume(); runMusic.play().catch(()=>{}); }
 
     endCompareInputGate();
   }
@@ -734,18 +941,48 @@
     lootDrops.push({ x:x+rand(-14,14)*DPR, y:y+rand(-14,14)*DPR, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
   }
 
+  function getMinMobHP(){
+    return 18 + Math.floor(gameTime/120);
+  }
+  function spawnTokenGlimpse(x, y){
+    tokenPops.push({ x, y, t: 0, life: 0.9 });
+  }
+  function coinSound(){
+    beep({freq: 988, dur: 0.06, type: "triangle", gain: 0.07 });
+    beep({freq: 1319, dur: 0.10, type: "triangle", gain: 0.055, slide: 0.85 });
+  }
   function gainXP(amount){
     const mul = 1 + player.xpGainPct;
-    player.xp += amount*mul;
+    const added = amount * mul;
+    player.xp += added;
+    runTotalXp += added;
+    tokenBarProgress += added;
+    while(tokenBarProgress >= 1000){
+      tokens += 1;
+      localStorage.setItem("affixloot_tokens", String(tokens));
+      coinSound();
+      spawnTokenGlimpse(player.x, player.y);
+      tokenBarProgress -= 1000;
+    }
     while(player.xp >= player.xpNeed){
       player.xp -= player.xpNeed;
       player.level++;
       player.xpNeed = Math.round(player.xpNeed*1.22 + 6);
       beep({freq: 920, dur:0.09, type:"triangle", gain:0.06});
       player.maxHP += 6; player.hp += 6;
-      player.dmg = Math.round(player.dmg * 1.02);
+
+      const levelAffixPool = AFFIX_POOL.filter(a=>["dmgPct","asPct","critPct","critDmg","lifesteal","splash","regenPct","msPct","slowAura","thorns","xpGain"].includes(a.id));
+      const chosen = pick(levelAffixPool);
+      const value = +(rand(0.1,0.5)).toFixed(1);
+      player.levelBonuses[chosen.id] = (player.levelBonuses[chosen.id]||0) + value;
+
+      showLevelUpToast(chosen.name, value);
+      spawnLevelUpRing(player.x, player.y);
+      levelUpExplosionSound();
+      splashDamage(player.x, player.y, getMinMobHP(), true, 600*DPR);
+
       player.dpsEst = estimateDPS(computeStats(equipped));
-      showToast({type:"weapon",rarity:"uncommon",icon:"⬆️",name:`Level ${player.level}`,base:{},affixes:[]}, `Level ${player.level} (+HP, +DMG)`);
+      recomputeBuild();
     }
   }
 
@@ -760,8 +997,8 @@
     if(side===3){ x=-margin; y=rand(-margin,H+margin); }
 
     const baseR = isElite ? rand(16,20) : rand(11,15);
-    const hp = isElite ? rand(80,110) : rand(22,34);
-    const sp = isElite ? rand(76,92) : rand(92,120);
+    const hp = isElite ? rand(65,90) : rand(18,28);
+    const sp = (isElite ? rand(64,80) : rand(78,102)) * 1.5;
 
     const types=[{icon:"👾"},{icon:"🧟"},{icon:"🕷️"},{icon:"🦂"}];
     const t=pick(types);
@@ -779,7 +1016,7 @@
     });
   }
 
-  function spawnBoss(){
+  function spawnBoss(isMiniboss=false){
     const margin=120*DPR;
     let x,y;
     const side=(Math.random()*4)|0;
@@ -789,18 +1026,20 @@
     if(side===3){ x=-margin; y=rand(-margin,H+margin); }
 
     const elapsed=gameTime;
-    const scale=1+elapsed/220;
+    const scale=1+elapsed/110;  // scale for 2.5 min round
+    const hpMult=isMiniboss?0.45:1;
+    const rMult=isMiniboss?0.75:1;
 
     enemies.push({
       kind:"boss",
       x,y,
-      r: 32*DPR,
-      hp: 650*scale,
-      maxHP: 650*scale,
-      sp: 78*DPR,
+      r: (32*rMult)*DPR,
+      hp: 650*scale*hpMult,
+      maxHP: 650*scale*hpMult,
+      sp: 117*DPR,   // 78 * 1.5
       elite: true,
       boss: true,
-      icon:"👹",
+      icon: isMiniboss?"👺":"👹",
       hitFlash:0,
       pulse: rand(0,Math.PI*2)
     });
@@ -841,9 +1080,12 @@
     if(e.hp<=0) killEnemy(e);
   }
 
-  function splashDamage(x,y, amount){
+  function spawnLevelUpRing(x,y){
+    levelUpRings.push({ x, y, r: 0, maxR: 600*DPR, life: 0.42, t: 0 });
+  }
+  function splashDamage(x,y, amount, noSound=false, radiusOverride=null){
     if(amount<=0) return;
-    const rad=(36+amount*0.55)*DPR;
+    const rad = radiusOverride != null ? radiusOverride : (36+amount*0.55)*DPR;
     const r2=rad*rad;
     for(const e of enemies){
       const dd=dist2(x,y,e.x,e.y);
@@ -853,7 +1095,7 @@
         hitEnemy(e,dmg);
       }
     }
-    beep({freq: 160, dur:0.08, type:"triangle", gain:0.05, slide:1.6});
+    if(!noSound) beep({freq: 160, dur:0.08, type:"triangle", gain:0.05, slide:1.6});
   }
 
   function healFromLifesteal(dmgDealt){
@@ -903,6 +1145,7 @@
     pendingLoot={drop,slotKey,currentItem,newItem};
     inCompare=true;
     paused=true;
+    // Run music keeps playing during compare; only gameplay is frozen
     showCompareUI();
   }
 
@@ -922,14 +1165,24 @@
         e.preventDefault();
         ensureAudio();
         beep({freq:540,dur:0.06,type:"triangle",gain:0.05});
-        acceptCompare(false);
+        compareSelectionIndex=0;
+        updateCompareSelection();
       }
     } else if(k==="arrowright" || k==="d"){
       if(canAcceptCompareKey(k)){
         e.preventDefault();
         ensureAudio();
-        beep({freq:760,dur:0.07,type:"triangle",gain:0.06,slide:0.8});
-        acceptCompare(true);
+        beep({freq:640,dur:0.06,type:"triangle",gain:0.05});
+        compareSelectionIndex=1;
+        updateCompareSelection();
+      }
+    } else if(k==="e"){
+      if(canAcceptCompareKey(k)){
+        e.preventDefault();
+        ensureAudio();
+        if(compareSelectionIndex===1) beep({freq:760,dur:0.07,type:"triangle",gain:0.06,slide:0.8});
+        else beep({freq:540,dur:0.06,type:"triangle",gain:0.05});
+        acceptCompare(compareSelectionIndex===1);
       }
     }
   }, {passive:false});
@@ -956,49 +1209,144 @@
   }
 
   // ========= Main Menu / High Score =========
-  function showMainMenu(){
+  function showSplash(){
     running=false; paused=false; inCompare=false;
     overlay.classList.remove("hidden");
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.add("mainMenuActive");
+    if(ovHead) ovHead.style.display="none";
+    ovBtns.innerHTML="";
+    ovTitle.textContent="";
+    ovSub.textContent="";
+    ovBody.innerHTML=`
+      <div class="menuSplashWrap" id="splashWrap">
+        <div class="menuSplashPrompt">Click to start</div>
+      </div>
+    `;
+    const wrap = document.getElementById("splashWrap");
+    if(wrap){
+      wrap.onclick = ()=>{
+        if(menuMusic && musicVol>0){ applyMusicVolume(); menuMusic.play().catch(()=>{}); }
+        menuMusicStartedOnce = true;
+        showMainMenu();
+      };
+      wrap.ontouchend = (e)=>{
+        e.preventDefault();
+        if(menuMusic && musicVol>0){ applyMusicVolume(); menuMusic.play().catch(()=>{}); }
+        menuMusicStartedOnce = true;
+        showMainMenu();
+      };
+    }
+  }
+
+  function showMainMenu(){
+    running=false; paused=false; inCompare=false;
+    if(runMusic){ runMusic.pause(); runMusic=null; }
+    overlay.classList.remove("hidden");
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.add("mainMenuActive");
     if(ovHead) ovHead.style.display="none";
     ovBtns.innerHTML="";
     ovTitle.textContent="";
     ovSub.textContent="";
 
     ovBody.innerHTML=`
-      <div id="menuHero">
-        <div id="menuStars"></div>
-        <div id="scanlines"></div>
-        <h1 class="retroLogo"><span>Affix Loot</span></h1>
-        <div class="logoSub">c64-ish main menu • loot & affixes • 5-min runs</div>
-        <div class="menuBtnRow">
-          <button class="menuBtnPrimary" id="btnStartLooting">Start Looting!</button>
-          <button id="btnHighScore">High Score</button>
-          <button id="btnMute">${audioOn ? "🔊 Lyd: På" : "🔇 Lyd: Av"}</button>
+      <div class="menuMainWrap">
+        <div class="menuMainGrid">
+          <button type="button" class="menuBox menuBoxPrimary" id="btnStartLooting">Start Looting!</button>
+          <button type="button" class="menuBox menuBoxPlaceholder" id="btnUpgrades">Upgrades</button>
+          <button type="button" class="menuBox menuBoxPlaceholder" id="btnChooseLevel">Choose Level</button>
+          <div class="menuBox menuBoxVolume" id="volumeBox">
+            <div class="volumeTitle">Audio</div>
+            ${getVolumeControlsHTML()}
+          </div>
         </div>
-        <div class="menuStats">
-          <div class="statBox">Best Time<br><b>${hiBestTime ? formatTime(hiBestTime) : "—"}</b></div>
-          <div class="statBox">Best Kills<br><b>${hiBestKills ? hiBestKills : "—"}</b></div>
-          <div class="statBox"><span class="blink">▮</span> Tip<br><b>Boss mid-run</b></div>
-        </div>
-      </div>
-      <div style="margin-top:12px; color:rgba(234,242,255,.70); font-size:12px; line-height:1.45;">
-        Controls: WASD/Arrows + <span class="keycap">Space</span> dash • <span class="keycap">P</span> pause.
       </div>
     `;
 
-    const btnStart = document.getElementById("btnStartLooting");
-    const btnHighScore = document.getElementById("btnHighScore");
-    const btnMute = document.getElementById("btnMute");
-    if(btnStart) btnStart.onclick=()=>{ ensureAudio(); startGame(false); };
-    if(btnHighScore) btnHighScore.onclick=()=>{ ensureAudio(); showHighScore(); };
-    if(btnMute) btnMute.onclick=()=>{
-      audioOn=!audioOn;
-      btnMute.textContent = audioOn ? "🔊 Lyd: På" : "🔇 Lyd: Av";
-      if(audioOn) beep({freq:800,dur:0.06,type:"sine",gain:0.05});
+    if(menuMusic && musicVol>0){
+      applyMusicVolume();
+      menuMusic.play().catch(()=>{});
+    }
+
+    document.getElementById("btnStartLooting").onclick=()=>{
+      ensureAudio();
+      stopMenuMusic();
+      startGame(false);
     };
+    document.getElementById("btnUpgrades").onclick=()=>showUpgradesMenu();
+    document.getElementById("btnChooseLevel").onclick=()=>{};
+    attachVolumeListeners(ovBody);
+  }
+
+  function showUpgradesMenu(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Skill Upgrades";
+    ovSub.textContent="Token bar fills as you collect XP (0→1000). At 1000 you earn 1 token. Spend tokens here to permanently improve affixes.";
+    ovBtns.innerHTML="";
+    function skillValue(affixId, level){
+      return affixId==="lootInvuln" ? level*0.2 : level;
+    }
+    function costForNextLevel(currentLevel){ return currentLevel + 1; }
+    const tokenEl = document.createElement("div");
+    tokenEl.className = "upgradeTokenBar";
+    tokenEl.innerHTML = `<span class="upgradeTokenLabel">Tokens</span><span class="upgradeTokenValue">${tokens}</span>`;
+    ovBody.innerHTML="";
+    ovBody.appendChild(tokenEl);
+    const listWrap = document.createElement("div");
+    listWrap.className = "upgradeListWrap";
+    for(const a of AFFIX_POOL){
+      const level = skillLevels[a.id]||0;
+      const cost = costForNextLevel(level);
+      const currentVal = skillValue(a.id, level);
+      const nextVal = skillValue(a.id, level+1);
+      const canAfford = tokens >= cost;
+      const row = document.createElement("div");
+      row.className = "upgradeRow";
+      const currentTxt = level === 0 ? "—" : a.fmt(currentVal);
+      const nextTxt = a.fmt(nextVal);
+      row.innerHTML = `
+        <div class="upgradeAffix">
+          <span class="upgradeAffixIcon">${a.icon}</span>
+          <span class="upgradeAffixName">${a.name}</span>
+        </div>
+        <div class="upgradeVals">
+          <div class="upgradeValPair"><span class="upgradeValLabel">Current</span><span class="upgradeValCurrent">${currentTxt}</span></div>
+          <div class="upgradeValPair"><span class="upgradeValLabel">Next</span><span class="upgradeValNext">${nextTxt}</span></div>
+        </div>
+        <div class="upgradeCostWrap">
+          <span class="upgradeCost">${cost}</span> <span class="upgradeCostLabel">token${cost!==1?"s":""}</span>
+          <button type="button" class="upgradeBtn" ${canAfford?"":"disabled"}>Upgrade</button>
+        </div>
+      `;
+      const btn = row.querySelector(".upgradeBtn");
+      if(btn && canAfford){
+        btn.onclick=()=>{
+          tokens -= cost;
+          skillLevels[a.id] = level + 1;
+          localStorage.setItem("affixloot_tokens", String(tokens));
+          localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
+          beep({freq:640,dur:0.06,type:"triangle",gain:0.05});
+          showUpgradesMenu();
+        };
+      }
+      listWrap.appendChild(row);
+    }
+    ovBody.appendChild(listWrap);
+    const backWrap = document.createElement("div");
+    backWrap.className = "upgradeBackWrap";
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => showMainMenu();
+    backWrap.appendChild(backBtn);
+    ovBody.appendChild(backWrap);
   }
 
   function showHighScore(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="High Score";
     ovSub.textContent="";
@@ -1008,7 +1356,7 @@
         <div style="margin-top:8px; color:rgba(234,242,255,.75); font-size:13px; line-height:1.55;">
           <div>⏱️ Best Time: <b>${hiBestTime ? formatTime(hiBestTime) : "—"}</b></div>
           <div style="margin-top:6px;">💀 Best Kills: <b>${hiBestKills ? hiBestKills : "—"}</b></div>
-          <div style="margin-top:10px; opacity:.85;">Boss har høy loot-sjanse — bra sjanse for rare/legendary.</div>
+          <div style="margin-top:10px; opacity:.85;">Boss has high loot chance — good chance for rare/legendary.</div>
         </div>
       </div>
       <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -1035,9 +1383,11 @@
 
     if(paused){
       overlay.classList.remove("hidden");
+      const oc = document.getElementById("overlayCard");
+      if(oc) oc.classList.remove("mainMenuActive");
       if(ovHead) ovHead.style.display="";
       ovTitle.textContent="Paused";
-      ovSub.textContent="Trykk P for å fortsette, eller restart.";
+      ovSub.textContent="Press P to resume, or restart.";
       ovBtns.innerHTML="";
       const resume=document.createElement("button");
       resume.textContent="Resume";
@@ -1051,7 +1401,47 @@
       ovBtns.appendChild(resume);
       ovBtns.appendChild(restart);
       ovBtns.appendChild(menu);
-      ovBody.innerHTML="";
+      ovBody.innerHTML=`
+        <div class="pauseVolumeWrap">
+          <div class="volumeTitle">Audio</div>
+          ${getVolumeControlsHTML()}
+        </div>
+        <div class="pauseStatsWrap">
+          <div class="pauseStatsTitle">Current Stats</div>
+          <!-- TODO later: show "NEW HIGH!" behind/over a stat value when it's the highest ever in game history -->
+          <div class="pauseStatsGrid" id="pauseStatsGrid"></div>
+        </div>
+      `;
+      const grid = document.getElementById("pauseStatsGrid");
+      if(grid){
+        const s = computeStats(equipped);
+        const atkPerSec = s.atkRate > 0 ? (1/s.atkRate).toFixed(1) : "—";
+        const rows = [
+          ["Damage", String(Math.round(s.dmg))],
+          ["Attack speed", `${atkPerSec}/s`],
+          ["Move speed", s.moveSpeed.toFixed(1)],
+          ["HP", String(s.maxHP)],
+          ["Shield", String(s.maxShield)],
+          ["Shield regen", `${(s.shieldRegenPct*100).toFixed(1)}%`],
+          ["Crit chance", `${(s.crit*100).toFixed(1)}%`],
+          ["Crit damage", `${(s.critDmg*100).toFixed(0)}%`],
+          ["Lifesteal", `${(s.lifesteal*100).toFixed(1)}%`],
+          ["Splash", `${(s.splash*100).toFixed(1)}%`],
+          ["Pierce", String(s.pierce)],
+          ["Pickup", String(Math.round(s.pickup))],
+          ["Slow aura", `${(s.slowAura*100).toFixed(1)}%`],
+          ["Thorns", `${(s.thorns*100).toFixed(1)}%`],
+          ["XP gain", `${(s.xpGainPct*100).toFixed(1)}%`],
+          ["Loot invuln", `${s.lootInvulnSec.toFixed(1)}s`],
+        ];
+        rows.forEach(([label, value])=>{
+          const row = document.createElement("div");
+          row.className = "pauseStatsRow";
+          row.innerHTML = `<span class="label">${label}</span><span class="value">${value}</span>`;
+          grid.appendChild(row);
+        });
+      }
+      attachVolumeListeners(ovBody);
     } else {
       overlay.classList.add("hidden");
       tLast = now(); // NEW: prevents dt spike & keeps time frozen while paused
@@ -1060,6 +1450,7 @@
 
   function gameOver(){
     running=false; paused=false; inCompare=false;
+    if(runMusic){ runMusic.pause(); runMusic=null; }
 
     const elapsed=gameTime;
     const fin=Math.floor(elapsed);
@@ -1067,6 +1458,8 @@
     if(kills>hiBestKills){hiBestKills=kills; localStorage.setItem("affixloot_best_kills", String(hiBestKills));}
 
     overlay.classList.remove("hidden");
+    const oc = document.getElementById("overlayCard");
+    if(oc) oc.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="Game Over";
     ovSub.innerHTML = `Time: <b>${formatTime(elapsed)}</b> • Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
@@ -1085,8 +1478,8 @@
       <div class="compareCard">
         <div style="font-weight:1000; letter-spacing:.25px;">Build Tip</div>
         <div style="margin-top:8px; color:rgba(234,242,255,.75); font-size:13px; line-height:1.55;">
-          Skytehastigheten er litt dempet — du <b>må</b> finne 💨 affixes (attack speed) og bedre våpen.
-          Boss mid-run har høyere loot-sjanse.
+          Attack speed is slightly reduced — you <b>need</b> to find 💨 affixes (attack speed) and better weapons.
+          Boss mid-run has higher loot chance.
         </div>
       </div>
     `;
@@ -1097,10 +1490,16 @@
 
   // ========= Reset / Start =========
   function resetState(){
-    enemies=[]; bullets=[]; orbs=[]; lootDrops=[]; particles=[];
+    enemies=[]; bullets=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
     kills=0; lootCount=0; streak=0; streakT=0;
     threat=1.0; spawnAcc=0; atkCD=0;
-    bossWarned=false; bossSpawned=false;
+    minibossWarned=false; minibossSpawned=false; bossWarned=false; bossSpawned=false;
+    roundEnd=false; victoryPhase=false;
+    victorySuckAt=0; suckActive=false;
+
+    runTotalXp = 0;
+    tokenBarProgress = 0;
+    tokenPops = [];
 
     player.x=W/2; player.y=H/2;
     player.vx=0; player.vy=0;
@@ -1112,9 +1511,13 @@
     player.invuln=0;
     player.dashT=0;
     player.dashCD=0;
+    player.dashIx=0;
+    player.dashIy=0;
 
     equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
+    player.levelBonuses={};
     recomputeBuild();
+    player.shield=player.maxShield;
     renderEquipMini();
     endCompareInputGate();
 
@@ -1125,20 +1528,31 @@
 
   function startGame(isPractice){
     practice=!!isPractice;
+    stopMenuMusic();
+    if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState();
 
-    // starter kit
-    equipped.weapon = makeItem("weapon","uncommon");
-    equipped.armor = makeItem("armor","common");
-    if(Math.random()<0.55) equipped.ring1 = makeItem("ring","common");
+    // starter kit: nothing equipped so first loot of each type is always an upgrade
+    equipped.weapon = null;
+    equipped.armor = null;
+    equipped.ring1 = null;
+    equipped.ring2 = null;
+    equipped.jewel = null;
     recomputeBuild();
     renderEquipMini();
 
     overlay.classList.add("hidden");
     running=true; paused=false; inCompare=false;
 
+    const runTrack = 1 + Math.floor(Math.random() * 5);
+    runMusic = new Audio(`assets/audio/${runTrack}.mp3`);
+    runMusic.loop = true;
+    applyMusicVolume();
+    stopMenuMusic(); // ensure menu music is off before starting run track
+    if(musicVol>0) runMusic.play().catch(()=>{});
+
     // softer start
-    for(let i=0;i<5;i++) spawnEnemy(false);
+    for(let i=0;i<4;i++) spawnEnemy(false);
     ensureAudio();
   }
 
@@ -1155,6 +1569,10 @@
     const xpPct=player.xpNeed>0 ? player.xp/player.xpNeed : 0;
     xpFill.style.width=`${clamp(xpPct,0,1)*100}%`;
     xpTxt.textContent=`${Math.round(player.xp)}/${Math.round(player.xpNeed)}`;
+
+    const tokenPct = Math.min(1, tokenBarProgress / 1000);
+    if(tokenFill) tokenFill.style.width=`${tokenPct*100}%`;
+    if(tokenTxt) tokenTxt.textContent=`${Math.round(tokenBarProgress)}/1000`;
 
     tTag.textContent=formatTime(elapsedS);
     kTag.textContent=`${kills}`;
@@ -1192,57 +1610,68 @@
     gameTime += dt;
     const elapsed = gameTime;
 
-    // boss warning/spawn
+    // round end at 2.5 min: no more spawns
+    if(!practice && elapsed>=BASE.roundSeconds && !roundEnd){
+      roundEnd=true;
+    }
+
+    // miniboss at ~1:15
     if(!practice){
+      if(!minibossWarned && elapsed>=BASE.minibossApproachAt){
+        minibossWarned=true;
+        bossBanner.textContent="⚠️ MINIBOSS! ⚠️";
+        bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+        bossBanner.classList.add("show");
+        bossApproachSound();
+      }
+      if(!minibossSpawned && elapsed>=BASE.minibossSpawnAt){
+        minibossSpawned=true;
+        spawnBoss(true);
+        beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
+        beep({noise:true,dur:0.05,gain:0.02});
+      }
+      // main boss at 2.5 min
       if(!bossWarned && elapsed>=BASE.bossApproachAt){
         bossWarned=true;
+        bossBanner.textContent="⚠️ BOSS APPROACHING! ⚠️";
         bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
         bossBanner.classList.add("show");
         bossApproachSound();
       }
       if(!bossSpawned && elapsed>=BASE.bossSpawnAt){
         bossSpawned=true;
-        spawnBoss();
+        spawnBoss(false);
         beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
         beep({noise:true,dur:0.05,gain:0.02});
       }
-      if(elapsed>=BASE.roundSeconds){
-        running=false; paused=false;
-
-        const fin=Math.floor(elapsed);
-        if(fin>hiBestTime){hiBestTime=fin; localStorage.setItem("affixloot_best_time", String(hiBestTime));}
-        if(kills>hiBestKills){hiBestKills=kills; localStorage.setItem("affixloot_best_kills", String(hiBestKills));}
-
-        overlay.classList.remove("hidden");
-        if(ovHead) ovHead.style.display="";
-        ovTitle.textContent="Victory!";
-        ovSub.innerHTML=`Du klarte 5 minutter! Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
-        ovBtns.innerHTML="";
-        const again=document.createElement("button");
-        again.textContent="Run it back";
-        again.onclick=()=>startGame(false);
-        const menu=document.createElement("button");
-        menu.textContent="Main Menu";
-        menu.onclick=()=>showMainMenu();
-        ovBtns.appendChild(again);
-        ovBtns.appendChild(menu);
-        ovBody.innerHTML="";
-        beep({freq:1040,dur:0.12,type:"triangle",gain:0.06});
-        beep({freq:1560,dur:0.16,type:"sine",gain:0.06,slide:0.75});
-        return;
-      }
     }
 
-    // softer early scaling
-    threat = 1.0 + (elapsed*elapsed)/7200;
+    // victory when all enemies dead after round end (2.5 min)
+    if(roundEnd && enemies.length===0 && !victoryPhase){
+      victoryPhase=true;
+      victorySuckAt=now()+2000; // start suck + fanfare in 2s
+      beep({freq:1040,dur:0.12,type:"triangle",gain:0.06});
+      beep({freq:1560,dur:0.16,type:"sine",gain:0.06,slide:0.75});
+    }
+    if(victoryPhase && victorySuckAt>0 && now()>=victorySuckAt){
+      victorySuckAt=0;
+      suckActive=true;
+      victorySuckFanfare();
+    }
 
-    const baseRate = 0.35 + elapsed/120;
-    const spawnsPerSec = baseRate * threat * 0.55;
-    spawnAcc += spawnsPerSec*dt;
-    while(spawnAcc>=1){
-      spawnAcc -= 1;
-      const eliteChance = clamp(0.02 + elapsed/220, 0.02, 0.12);
-      spawnEnemy(Math.random()<eliteChance);
+    // spawning: only before round end (2.5 min)
+    if(!roundEnd){
+      threat = 1.0 + (elapsed*elapsed)/1800;
+      const baseRate = 0.26 + elapsed/75;
+      const spawnsPerSec = baseRate * threat * 0.45;
+      spawnAcc += spawnsPerSec*dt;
+      while(spawnAcc>=1){
+        spawnAcc -= 1;
+        const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
+        spawnEnemy(Math.random()<eliteChance);
+      }
+    } else {
+      threat = 1.0 + (elapsed*elapsed)/1800;
     }
 
     streakT -= dt;
@@ -1270,15 +1699,19 @@
       player.dashT=BASE.dashDur;
       player.dashCD=BASE.dashCD;
       player.invuln=Math.max(player.invuln,0.12);
+      player.dashIx=ix;
+      player.dashIy=iy;
       beep({freq:620,dur:0.06,type:"triangle",gain:0.05,slide:1.4});
     }
     if(player.dashT>0){
       player.dashT-=dt;
       speed=BASE.dashSpeed*DPR;
+      player.vx=player.dashIx*speed;
+      player.vy=player.dashIy*speed;
+    } else {
+      player.vx=ix*speed;
+      player.vy=iy*speed;
     }
-
-    player.vx=ix*speed;
-    player.vy=iy*speed;
     player.x=clamp(player.x+player.vx*dt, 20*DPR, W-20*DPR);
     player.y=clamp(player.y+player.vy*dt, 20*DPR, H-20*DPR);
 
@@ -1343,20 +1776,28 @@
     // orbs
     for(let i=orbs.length-1;i>=0;i--){
       const o=orbs[i];
-      o.x += o.vx*dt; o.y += o.vy*dt;
-      o.vx *= (1-4*dt); o.vy *= (1-4*dt);
-
-      const pr=player.pickup*DPR;
       const d2p=dist2(o.x,o.y,player.x,player.y);
-      if(d2p < pr*pr){
-        const d=Math.sqrt(d2p)||1;
-        const pull=clamp(1-d/pr,0,1);
-        const sp=(240+pull*520)*DPR;
-        o.vx += ((player.x-o.x)/d)*sp*dt;
-        o.vy += ((player.y-o.y)/d)*sp*dt;
-      }
       const rr=player.r+o.r;
-      if(d2p < rr*rr){
+      if(suckActive){
+        const d=Math.sqrt(d2p)||1;
+        const sp=1200*DPR;
+        o.vx = ((player.x-o.x)/d)*sp;
+        o.vy = ((player.y-o.y)/d)*sp;
+        o.x += o.vx*dt; o.y += o.vy*dt;
+      } else {
+        o.x += o.vx*dt; o.y += o.vy*dt;
+        o.vx *= (1-4*dt); o.vy *= (1-4*dt);
+        const pr=player.pickup*DPR;
+        if(d2p < pr*pr){
+          const d=Math.sqrt(d2p)||1;
+          const pull=clamp(1-d/pr,0,1);
+          const sp=(240+pull*520)*DPR;
+          o.vx += ((player.x-o.x)/d)*sp*dt;
+          o.vy += ((player.y-o.y)/d)*sp*dt;
+        }
+      }
+      const d2pCheck=dist2(o.x,o.y,player.x,player.y);
+      if(d2pCheck < rr*rr){
         orbs.splice(i,1);
         gainXP(o.r>5*DPR?6:3);
         beep({freq:880,dur:0.02,type:"sine",gain:0.02,slide:0.92});
@@ -1367,17 +1808,25 @@
     for(let i=lootDrops.length-1;i>=0;i--){
       const L=lootDrops[i];
       L.t += dt;
-      const pr=(player.pickup+20)*DPR;
       const d2p=dist2(L.x,L.y,player.x,player.y);
-      if(d2p < pr*pr){
+      if(suckActive){
         const d=Math.sqrt(d2p)||1;
-        const pull=clamp(1-d/pr,0,1);
-        const sp=(120+pull*480)*DPR;
+        const sp=900*DPR;
         L.x += ((player.x-L.x)/d)*sp*dt;
         L.y += ((player.y-L.y)/d)*sp*dt;
+      } else {
+        const pr=(player.pickup+20)*DPR;
+        if(d2p < pr*pr){
+          const d=Math.sqrt(d2p)||1;
+          const pull=clamp(1-d/pr,0,1);
+          const sp=(120+pull*480)*DPR;
+          L.x += ((player.x-L.x)/d)*sp*dt;
+          L.y += ((player.y-L.y)/d)*sp*dt;
+        }
       }
       const rr=player.r+L.r;
-      if(d2p < rr*rr){
+      const d2pCheck=dist2(L.x,L.y,player.x,player.y);
+      if(d2pCheck < rr*rr){
         openCompare(L);
         break;
       }
@@ -1393,6 +1842,19 @@
       p.vy *= (1-2.8*dt);
       p.vy += 20*DPR*dt;
       if(p.t > p.life) particles.splice(i,1);
+    }
+    // level-up rings
+    for(let i=levelUpRings.length-1;i>=0;i--){
+      const r=levelUpRings[i];
+      r.t += dt;
+      r.r = r.maxR * Math.min(1, r.t / r.life);
+      if(r.t >= r.life) levelUpRings.splice(i,1);
+    }
+    // token pop effects (float up, fade)
+    for(let i=tokenPops.length-1;i>=0;i--){
+      const pop=tokenPops[i];
+      pop.t += dt;
+      if(pop.t >= pop.life) tokenPops.splice(i,1);
     }
 
     updateHUD(elapsed);
@@ -1464,8 +1926,55 @@
     for(const b of bullets) drawBullet(b);
     for(const e of enemies) drawEnemy(e);
     for(const p of particles) drawParticle(p);
+    for(const ring of levelUpRings) drawLevelUpRing(ring);
 
     drawPlayer();
+    for(const pop of tokenPops) drawTokenPop(pop);
+
+    if(victoryPhase){
+      ctx.save();
+      ctx.globalAlpha=0.92;
+      ctx.fillStyle="rgba(0,0,0,0.35)";
+      ctx.fillRect(0,0,W,H);
+      ctx.font=`bold ${Math.min(72, W/10)*DPR}px ui-sans-serif`;
+      ctx.textAlign="center";
+      ctx.textBaseline="middle";
+      ctx.fillStyle="rgba(255,220,100,0.98)";
+      ctx.shadowColor="rgba(255,200,80,0.9)";
+      ctx.shadowBlur=24*DPR;
+      ctx.fillText("Victory!", W/2, H*0.32);
+      ctx.font=`${14*DPR}px ui-sans-serif`;
+      ctx.fillStyle="rgba(234,242,255,0.9)";
+      ctx.shadowBlur=0;
+      ctx.fillText("Collect XP — press M or Esc for menu", W/2, H*0.42);
+      ctx.restore();
+    }
+  }
+
+  function showVictoryEndScreen(){
+    if(!victoryPhase) return;
+    running=false;
+    if(runMusic){ runMusic.pause(); runMusic=null; }
+    const elapsed=gameTime;
+    const fin=Math.floor(elapsed);
+    if(fin>hiBestTime){hiBestTime=fin; localStorage.setItem("affixloot_best_time", String(hiBestTime));}
+    if(kills>hiBestKills){hiBestKills=kills; localStorage.setItem("affixloot_best_kills", String(hiBestKills));}
+    overlay.classList.remove("hidden");
+    const oc = document.getElementById("overlayCard");
+    if(oc) oc.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Victory!";
+    ovSub.innerHTML=`Round complete! Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
+    ovBtns.innerHTML="";
+    const again=document.createElement("button");
+    again.textContent="Run it back";
+    again.onclick=()=>startGame(false);
+    const menu=document.createElement("button");
+    menu.textContent="Main Menu";
+    menu.onclick=()=>showMainMenu();
+    ovBtns.appendChild(again);
+    ovBtns.appendChild(menu);
+    ovBody.innerHTML="";
   }
 
   function drawPlayer(){
@@ -1481,6 +1990,10 @@
 
     glowCircle(player.x, player.y, player.r*0.85, "rgba(124,255,178,0.70)", 0.30, 26);
 
+    const blinkAlpha = (player.invuln > 0.4) ? (0.4 + 0.6 * Math.abs(Math.sin(t * 18))) : 1;
+    ctx.save();
+    ctx.globalAlpha = blinkAlpha;
+
     const bodyGrad=ctx.createRadialGradient(player.x-player.r*0.4, player.y-player.r*0.5, 2, player.x, player.y, player.r*1.6);
     bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
     bodyGrad.addColorStop(0.25, "rgba(124,255,178,0.85)");
@@ -1492,6 +2005,8 @@
     ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
     ctx.fill();
     ctx.stroke();
+
+    ctx.restore();
 
     if(player.dashT>0){
       ctx.save();
@@ -1528,6 +2043,7 @@
     }
 
     ctx.save();
+    ctx.globalAlpha = blinkAlpha;
     ctx.font = `${16*DPR}px ui-sans-serif`;
     ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillStyle="rgba(0,0,0,0.65)";
@@ -1678,6 +2194,47 @@
     ctx.restore();
   }
 
+  function drawLevelUpRing(ring){
+    const t = ring.t / ring.life;
+    const alpha = 1 - t*t;
+    const col = "rgba(255,220,100,0.95)";
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = col;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 24*DPR;
+    ctx.lineWidth = 4*DPR;
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawTokenPop(pop){
+    const t = pop.t / pop.life;
+    const alpha = 1 - t * t;
+    const floatY = pop.y - 28*DPR - pop.t * 70*DPR;
+    const scale = 1 + t * 0.4;
+    const r = 14 * DPR * scale;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(pop.x, floatY);
+    ctx.scale(scale, scale);
+    ctx.shadowColor = "rgba(255,212,106,0.9)";
+    ctx.shadowBlur = 16*DPR;
+    ctx.fillStyle = "rgba(255,212,106,0.95)";
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 2*DPR;
+    ctx.stroke();
+    ctx.font = `bold ${12*DPR}px ui-sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillText("+1", 0, 0);
+    ctx.restore();
+  }
   function drawParticle(p){
     const t=p.t/p.life;
     if(p.pulse){
@@ -1712,10 +2269,12 @@
     hpFill.style.width="100%";
     shFill.style.width="0%";
     xpFill.style.width="0%";
+    if(tokenFill) tokenFill.style.width="0%";
+    if(tokenTxt) tokenTxt.textContent="0/1000";
   }
   resetUI();
   renderEquipMini();
-  showMainMenu();
+  showSplash();
 
   function loopStart(){ loop(); }
   loopStart();

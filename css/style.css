@@ -94,6 +94,7 @@
     .fill.hp{ background: linear-gradient(90deg, rgba(255,77,109,.92), rgba(255,114,169,.85)); }
     .fill.xp{ background: linear-gradient(90deg, rgba(124,255,178,.92), rgba(74,255,214,.85)); }
     .fill.sh{ background: linear-gradient(90deg, rgba(78,166,255,.92), rgba(141,206,255,.85)); }
+    .fill.token{ background: linear-gradient(90deg, rgba(255,212,106,.92), rgba(255,180,80,.85)); }
 
     /* Equipment */
     #equipMini{display:grid; grid-template-columns:1fr; gap:8px;}
@@ -157,6 +158,201 @@
       -webkit-backdrop-filter: blur(6px);
     }
     #overlay.hidden{display:none;}
+    #overlayCard.mainMenuActive{
+      width:100%; max-width:none; height:100%;
+      border-radius:0;
+      border:none;
+      background:transparent;
+      box-shadow:none;
+    }
+    #overlayCard.mainMenuActive #ovBody{
+      padding:0; height:100%; display:flex; flex-direction:column;
+    }
+
+    /* Main menu: image background + four boxes */
+    .menuMainWrap{
+      position:relative;
+      width:100%; height:100%;
+      background: url("../assets/graphics/Main Menu.png") center/cover no-repeat;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .menuMainGrid{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:20px 24px;
+      max-width:520px;
+      padding:24px;
+    }
+    .menuBox{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-height:72px;
+      padding:16px 20px;
+      border-radius:16px;
+      border:2px solid rgba(255,255,255,.22);
+      background: rgba(0,0,0,.45);
+      color:#EAF2FF;
+      font-weight:900;
+      font-size:17px;
+      letter-spacing:.5px;
+      cursor:pointer;
+      transition: transform .1s ease, background .15s ease, border-color .15s ease, filter .15s ease;
+      box-shadow: 0 8px 32px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.06);
+    }
+    .menuBox:hover{
+      background: rgba(0,0,0,.55);
+      border-color: rgba(255,255,255,.35);
+      transform: translateY(-2px);
+      filter: brightness(1.08);
+    }
+    .menuBox:active{ transform: translateY(0); }
+    .menuBox.menuBoxPrimary{
+      background: linear-gradient(135deg, rgba(78,166,255,.35), rgba(255,138,42,.28));
+      border-color: rgba(255,255,255,.3);
+    }
+    .menuBox.menuBoxPrimary:hover{ filter: brightness(1.12); }
+    .menuBox.menuBoxPlaceholder{
+      opacity:.88;
+      cursor:default;
+    }
+    .menuBox.menuBoxPlaceholder:hover{ transform:none; }
+    @media (max-width: 560px){
+      .menuMainGrid{ grid-template-columns: 1fr; max-width:320px; }
+    }
+
+    .menuBox.menuBoxVolume{
+      grid-column: 1 / -1;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:stretch;
+      cursor:default;
+    }
+    .menuBox.menuBoxVolume:hover{ transform:none; }
+    .volumeTitle{ font-size:14px; font-weight:900; margin-bottom:4px; }
+    .volumeControlRow{
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .volumeLabel{ font-size:13px; font-weight:800; min-width:100px; }
+    .volumeSlider{ flex:1; min-width:80px; height:8px; accent-color: var(--xp); }
+    .volumePct{ font-size:12px; font-weight:800; min-width:36px; text-align:right; }
+    .pauseVolumeWrap{
+      padding:12px 0 0 0;
+      border-top:1px solid rgba(255,255,255,.1);
+      margin-top:8px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .pauseVolumeWrap .volumeTitle{ margin-bottom:0; }
+
+    /* Pause: Current Stats (below Audio) */
+    .pauseStatsWrap{
+      padding:12px 0 0 0;
+      border-top:1px solid rgba(255,255,255,.1);
+      margin-top:8px;
+    }
+    .pauseStatsTitle{ font-size:14px; font-weight:900; margin-bottom:8px; }
+    .pauseStatsGrid{
+      display:grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap:6px 20px;
+      font-size:12px;
+    }
+    .pauseStatsRow{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+    }
+    .pauseStatsRow .label{ color:var(--muted); font-weight:700; }
+    .pauseStatsRow .value{ font-weight:800; font-family:ui-monospace, monospace; color:var(--text); }
+
+    /* Skill Upgrades menu */
+    .upgradeTokenBar{
+      display:flex; align-items:center; gap:10px;
+      padding:10px 14px; margin-bottom:14px;
+      border-radius:14px;
+      border:1px solid rgba(255,212,106,.25);
+      background: rgba(255,212,106,.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+    }
+    .upgradeTokenLabel{ font-size:14px; font-weight:900; color:var(--muted); }
+    .upgradeTokenValue{ font-size:20px; font-weight:1000; font-family:ui-monospace, monospace; color:var(--gold); letter-spacing:.5px; }
+    .upgradeListWrap{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; max-height:min(55vh, 420px); overflow-y:auto; padding-right:4px; }
+    .upgradeListWrap::-webkit-scrollbar{ width:6px; }
+    .upgradeListWrap::-webkit-scrollbar-track{ background: rgba(0,0,0,.2); border-radius:3px; }
+    .upgradeListWrap::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.2); border-radius:3px; }
+    .upgradeRow{
+      display:grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) minmax(0, 1fr);
+      align-items:center;
+      gap:12px 16px;
+      padding:12px 14px;
+      border-radius:14px;
+      border:1px solid var(--stroke);
+      background: var(--panel);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+    }
+    @media (max-width: 640px){
+      .upgradeRow{ grid-template-columns: 1fr; }
+    }
+    .upgradeAffix{ display:flex; align-items:center; gap:8px; }
+    .upgradeAffixIcon{ font-size:22px; line-height:1; }
+    .upgradeAffixName{ font-size:14px; font-weight:900; letter-spacing:.2px; color:var(--text); }
+    .upgradeVals{ display:flex; gap:16px; flex-wrap:wrap; }
+    .upgradeValPair{ display:flex; flex-direction:column; gap:2px; }
+    .upgradeValLabel{ font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
+    .upgradeValCurrent{ font-size:13px; font-weight:800; font-family:ui-monospace, monospace; color:var(--text); }
+    .upgradeValNext{ font-size:13px; font-weight:800; font-family:ui-monospace, monospace; color:var(--xp); }
+    .upgradeCostWrap{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; justify-self:end; }
+    .upgradeCost{ font-size:16px; font-weight:1000; font-family:ui-monospace, monospace; color:var(--gold); }
+    .upgradeCostLabel{ font-size:12px; color:var(--muted); }
+    .upgradeBtn{
+      padding:8px 14px;
+      font-size:13px;
+      border-radius:10px;
+      border:1px solid rgba(124,255,178,.35);
+      background: rgba(124,255,178,.12);
+      color: var(--xp);
+      font-weight:900;
+      cursor:pointer;
+      transition: background .15s ease, transform .08s ease;
+    }
+    .upgradeBtn:hover:not(:disabled){ background: rgba(124,255,178,.22); transform: translateY(-1px); }
+    .upgradeBtn:disabled{ opacity:.5; cursor:not-allowed; border-color: rgba(255,255,255,.1); background: rgba(255,255,255,.06); color: var(--muted); }
+    .upgradeBackWrap{ margin-top:4px; }
+
+    .menuSplashWrap{
+      position:relative;
+      width:100%; height:100%;
+      background: url("../assets/graphics/Main Menu.png") center/cover no-repeat;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+    }
+    .menuSplashPrompt{
+      padding:20px 36px;
+      border-radius:16px;
+      border:2px solid rgba(255,255,255,.35);
+      background: rgba(0,0,0,.5);
+      color:#EAF2FF;
+      font-weight:900;
+      font-size:22px;
+      letter-spacing:.8px;
+      text-shadow: 0 2px 8px rgba(0,0,0,.6);
+      transition: transform .1s ease, background .15s ease;
+    }
+    .menuSplashWrap:hover .menuSplashPrompt{
+      background: rgba(0,0,0,.6);
+      transform: scale(1.02);
+    }
 
     #overlayCard{
       width:min(860px, calc(100vw - 20px));
@@ -195,14 +391,30 @@
 
     /* Compare UI */
     .ovGrid{display:grid; grid-template-columns: 1fr 1fr; gap:12px;}
-    @media (max-width: 900px){ .ovGrid{grid-template-columns:1fr;} }
+    .ovGrid.ovGridCompare{ grid-template-columns: 1fr 1fr; gap:20px; max-width:900px; margin:0 auto; }
+    @media (max-width: 900px){ .ovGrid{grid-template-columns:1fr;} .ovGrid.ovGridCompare{ grid-template-columns: 1fr; } }
     .compareCard{
       border-radius:16px;
       border:1px solid rgba(255,255,255,.12);
       background: rgba(0,0,0,.18);
-      padding:12px;
+      padding:14px 16px;
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+      transition: filter .15s ease, opacity .15s ease, border-color .15s ease, box-shadow .15s ease;
     }
+    .compareCard.compareSelected{
+      border-color: var(--xp);
+      box-shadow: 0 0 0 2px rgba(124,255,178,.35), inset 0 0 0 1px rgba(255,255,255,.06);
+      filter: none;
+      opacity: 1;
+    }
+    .compareCard.compareBlur{
+      filter: blur(4px);
+      opacity: 0.7;
+    }
+    .cmpDiffs{ margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.08); display:flex; flex-wrap:wrap; gap:8px 14px; }
+    .cmpDiffLine{ font-size:13px; font-weight:800; }
+    .cmpDiffGood{ color: var(--good); }
+    .cmpDiffBad{ color: var(--bad); }
     .cmpTop{display:flex; align-items:center; justify-content:space-between; gap:10px;}
     .cmpName{font-weight:1000; letter-spacing:.2px; font-size:14px;}
     .cmpRar{
