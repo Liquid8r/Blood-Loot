@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Affix Loot — one-file</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <div id="wrap"><canvas id="game"></canvas></div>
+  <div id="vignette"></div>
+
+  <div id="hud">
+    <div id="hudTL" class="hudCard">
+      <div class="row">
+        <div class="tag"><span>🧪</span><span id="tTag" class="mono">00:00</span></div>
+        <div class="tag"><span>💀</span><span id="kTag" class="mono">0</span></div>
+        <div class="tag"><span>📦</span><span id="lTag" class="mono">0</span></div>
+      </div>
+      <div class="barWrap">
+        <div>
+          <div class="row"><span class="tiny">HP</span><span class="tiny mono" id="hpTxt">100/100</span></div>
+          <div class="bar"><div id="hpFill" class="fill hp"></div></div>
+        </div>
+        <div>
+          <div class="row"><span class="tiny">Shield</span><span class="tiny mono" id="shTxt">0/0</span></div>
+          <div class="bar"><div id="shFill" class="fill sh"></div></div>
+        </div>
+        <div>
+          <div class="row"><span class="tiny">XP</span><span class="tiny mono" id="xpTxt">0/20</span></div>
+          <div class="bar"><div id="xpFill" class="fill xp"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hudTR" class="hudCard">
+      <div class="tag"><span>⚔️</span><span id="dpsTag" class="mono">DPS 0</span></div>
+      <div class="tag"><span>🔥</span><span id="streakTag" class="mono">0</span></div>
+      <div class="tag"><span>🎚️</span><span id="threatTag" class="mono">1.00×</span></div>
+
+      <!-- NEW: small in-run-only tags -->
+      <div class="tag" id="dmgWrap"><span>💥</span><span id="dmgTag" class="mono">DMG 0</span></div>
+      <div class="tag" id="atkWrap"><span>💨</span><span id="atkTag" class="mono">ATK 0.00/s</span></div>
+    </div>
+
+    <div id="hudBR" class="hudCard">
+      <div class="row">
+        <div class="tiny">Equipment</div>
+        <div class="tiny">Move: WASD/↑↓←→ • Dash: <span class="keycap">Space</span> • Pause: <span class="keycap">P</span></div>
+      </div>
+      <div style="height:8px;"></div>
+      <div id="equipMini"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="bossBanner">⚠️ BOSS APPROACHING! ⚠️</div>
+  <div id="hint">Loot pauses + compare. Boss mid-run with higher loot chance. Legendary = gold burst + power-up sound.</div>
+
+  <div id="overlay">
+    <div id="overlayCard">
+      <div id="ovHead">
+        <div>
+          <h2 id="ovTitle">Affix Loot</h2>
+          <p id="ovSub">Retro looting • sjeldne drops • affix-valg</p>
+        </div>
+        <div id="ovBtns"></div>
+      </div>
+      <div id="ovBody"></div>
+    </div>
+  </div>
+
+  <script src="./src/main.js"></script>
+</body>
+</html>
