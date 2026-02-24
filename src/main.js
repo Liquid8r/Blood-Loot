@@ -46,6 +46,12 @@
   const dmgWrap = document.getElementById("dmgWrap");
   const atkWrap = document.getElementById("atkWrap");
 
+  // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
+  const GAME_VERSION = "1.001";
+  const gameVersionEl = document.getElementById("gameVersion");
+  if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
+  document.title = `Affix Loot — v${GAME_VERSION}`;
+
   // ========= Helpers =========
   const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
   const lerp = (a,b,t)=>a+(b-a)*t;
@@ -897,13 +903,15 @@
       recomputeBuild();
       renderEquipMini();
       showToast(it);
-      const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
-      player.invuln = Math.max(player.invuln, invulnDur);
       if(it.rarity==="legendary"){ spawnLegendaryBurst(player.x,player.y,false); powerUpLegendary(); }
       else beepLoot(it.rarity);
     } else {
       if(!discardNew) beep({freq:420,dur:0.05,type:"sine",gain:0.03});
     }
+
+    // Always grant full invuln after confirming (equip or discard), so we don't get one-shot in a pile of loot
+    const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+    player.invuln = Math.max(player.invuln, invulnDur);
 
     pendingLoot=null;
     inCompare=false;
@@ -1145,7 +1153,9 @@
     pendingLoot={drop,slotKey,currentItem,newItem};
     inCompare=true;
     paused=true;
-    // Run music keeps playing during compare; only gameplay is frozen
+    // Invulnerable as soon as we touch loot and while choosing (game is paused; invuln set so we're safe on exit too)
+    const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+    player.invuln = Math.max(player.invuln, invulnDur);
     showCompareUI();
   }
 

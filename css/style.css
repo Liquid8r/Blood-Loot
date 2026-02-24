@@ -368,7 +368,9 @@
       border-bottom:1px solid rgba(255,255,255,.10);
       background: rgba(0,0,0,.20);
     }
+    #ovHead > div:first-child{ display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 8px; }
     #ovTitle{margin:0; font-size:18px; letter-spacing:.35px; font-weight:1000;}
+    .gameVersion{ font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.2px; }
     #ovSub{margin:4px 0 0 0; font-size:13px; color:var(--muted); line-height:1.35;}
     #ovBody{padding:12px 14px 14px 14px;}
     #ovBtns{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
