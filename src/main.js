@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.001";
+  const GAME_VERSION = "1.002";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -230,6 +230,16 @@
     bossSpawnAt: 150,
   };
 
+  // ========= Levels (1-1 = current board; beat to unlock 1-2, then 1-3) =========
+  const LEVELS = [
+    { id: "1-1", name: "1-1", roundSeconds: 150, spawnScale: 1,    enemyHpScale: 1,   bossHpScale: 1,   threatDivisor: 1800, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "1-2", name: "1-2", roundSeconds: 165, spawnScale: 1.12, enemyHpScale: 1.18, bossHpScale: 1.18, threatDivisor: 1500, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "1-3", name: "1-3", roundSeconds: 180, spawnScale: 1.28, enemyHpScale: 1.4,  bossHpScale: 1.35, threatDivisor: 1200, minibossPct: 0.47, bossPct: 0.93 },
+  ];
+  function getLevelConfig(id){
+    return LEVELS.find(l=>l.id===id) || LEVELS[0];
+  }
+
   // ========= Inputs =========
   const keys=new Set();
   addEventListener("keydown",(e)=>{
@@ -353,6 +363,18 @@
   // High score
   let hiBestTime = +localStorage.getItem("affixloot_best_time") || 0;
   let hiBestKills = +localStorage.getItem("affixloot_best_kills") || 0;
+
+  // Level select: which level to play; which are unlocked (persisted)
+  let selectedLevelId = "1-1";
+  let unlockedLevels = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_unlocked_levels");
+      if(!raw) return ["1-1"];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) && arr.length ? arr : ["1-1"];
+    } catch(e){ return ["1-1"]; }
+  })();
+  let currentLevelConfig = null; // set at run start from getLevelConfig(selectedLevelId)
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -1014,8 +1036,8 @@
     enemies.push({
       kind: isElite ? "elite" : "mob",
       x,y, r: baseR*DPR,
-      hp: hp*(isElite?1.15:1),
-      maxHP: hp*(isElite?1.15:1),
+      hp: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
+      maxHP: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
       sp: sp*DPR,
       elite: isElite,
       boss: false,
@@ -1034,7 +1056,8 @@
     if(side===3){ x=-margin; y=rand(-margin,H+margin); }
 
     const elapsed=gameTime;
-    const scale=1+elapsed/110;  // scale for 2.5 min round
+    const lvl = currentLevelConfig || getLevelConfig("1-1");
+    const scale = (1+elapsed/110) * (lvl.bossHpScale || 1);
     const hpMult=isMiniboss?0.45:1;
     const rMult=isMiniboss?0.75:1;
 
@@ -1285,7 +1308,7 @@
       startGame(false);
     };
     document.getElementById("btnUpgrades").onclick=()=>showUpgradesMenu();
-    document.getElementById("btnChooseLevel").onclick=()=>{};
+    document.getElementById("btnChooseLevel").onclick=()=>showChooseLevelMenu();
     attachVolumeListeners(ovBody);
   }
 
@@ -1345,6 +1368,47 @@
       listWrap.appendChild(row);
     }
     ovBody.appendChild(listWrap);
+    const backWrap = document.createElement("div");
+    backWrap.className = "upgradeBackWrap";
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => showMainMenu();
+    backWrap.appendChild(backBtn);
+    ovBody.appendChild(backWrap);
+  }
+
+  function showChooseLevelMenu(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Choose Level";
+    ovSub.textContent="Unlock each level by winning the previous one. Selected level is used when you Start Looting.";
+    ovBtns.innerHTML="";
+    ovBody.innerHTML="";
+    const wrap = document.createElement("div");
+    wrap.className = "levelSelectWrap";
+    for(const lvl of LEVELS){
+      const unlocked = unlockedLevels.includes(lvl.id);
+      const selected = selectedLevelId === lvl.id;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "levelSelectRow" + (unlocked ? "" : " levelLocked") + (selected ? " levelSelected" : "");
+      row.disabled = !unlocked;
+      row.innerHTML = `
+        <span class="levelSelectId">${lvl.id}</span>
+        <span class="levelSelectName">${lvl.name || lvl.id}</span>
+        ${unlocked ? (selected ? '<span class="levelSelectBadge">✓ Selected</span>' : '<span class="levelSelectBadge">Select</span>') : '<span class="levelSelectLock">🔒 Locked</span>'}
+      `;
+      if(unlocked){
+        row.onclick = () => {
+          selectedLevelId = lvl.id;
+          beep({freq:520,dur:0.06,type:"triangle",gain:0.05});
+          showChooseLevelMenu();
+        };
+      }
+      wrap.appendChild(row);
+    }
+    ovBody.appendChild(wrap);
     const backWrap = document.createElement("div");
     backWrap.className = "upgradeBackWrap";
     const backBtn = document.createElement("button");
@@ -1538,6 +1602,7 @@
 
   function startGame(isPractice){
     practice=!!isPractice;
+    currentLevelConfig = getLevelConfig(selectedLevelId);
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState();
@@ -1619,36 +1684,41 @@
     // NEW: advance game clock only while running & unpaused
     gameTime += dt;
     const elapsed = gameTime;
+    const lvl = currentLevelConfig || getLevelConfig("1-1");
+    const roundSeconds = lvl.roundSeconds;
 
-    // round end at 2.5 min: no more spawns
-    if(!practice && elapsed>=BASE.roundSeconds && !roundEnd){
+    // round end: no more spawns
+    if(!practice && elapsed>=roundSeconds && !roundEnd){
       roundEnd=true;
     }
 
-    // miniboss at ~1:15
+    // miniboss / boss timing from level (% of round)
     if(!practice){
-      if(!minibossWarned && elapsed>=BASE.minibossApproachAt){
+      const minibossApproachAt = roundSeconds * lvl.minibossPct * 0.9;
+      const minibossSpawnAt = roundSeconds * lvl.minibossPct;
+      const bossApproachAt = roundSeconds * lvl.bossPct - 8;
+      const bossSpawnAt = roundSeconds * lvl.bossPct;
+      if(!minibossWarned && elapsed>=minibossApproachAt){
         minibossWarned=true;
         bossBanner.textContent="⚠️ MINIBOSS! ⚠️";
         bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
         bossBanner.classList.add("show");
         bossApproachSound();
       }
-      if(!minibossSpawned && elapsed>=BASE.minibossSpawnAt){
+      if(!minibossSpawned && elapsed>=minibossSpawnAt){
         minibossSpawned=true;
         spawnBoss(true);
         beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
         beep({noise:true,dur:0.05,gain:0.02});
       }
-      // main boss at 2.5 min
-      if(!bossWarned && elapsed>=BASE.bossApproachAt){
+      if(!bossWarned && elapsed>=bossApproachAt){
         bossWarned=true;
         bossBanner.textContent="⚠️ BOSS APPROACHING! ⚠️";
         bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
         bossBanner.classList.add("show");
         bossApproachSound();
       }
-      if(!bossSpawned && elapsed>=BASE.bossSpawnAt){
+      if(!bossSpawned && elapsed>=bossSpawnAt){
         bossSpawned=true;
         spawnBoss(false);
         beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
@@ -1669,10 +1739,10 @@
       victorySuckFanfare();
     }
 
-    // spawning: only before round end (2.5 min)
+    // spawning: only before round end
     if(!roundEnd){
-      threat = 1.0 + (elapsed*elapsed)/1800;
-      const baseRate = 0.26 + elapsed/75;
+      threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
+      const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
       const spawnsPerSec = baseRate * threat * 0.45;
       spawnAcc += spawnsPerSec*dt;
       while(spawnAcc>=1){
@@ -1681,7 +1751,7 @@
         spawnEnemy(Math.random()<eliteChance);
       }
     } else {
-      threat = 1.0 + (elapsed*elapsed)/1800;
+      threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
     }
 
     streakT -= dt;
@@ -1969,12 +2039,23 @@
     const fin=Math.floor(elapsed);
     if(fin>hiBestTime){hiBestTime=fin; localStorage.setItem("affixloot_best_time", String(hiBestTime));}
     if(kills>hiBestKills){hiBestKills=kills; localStorage.setItem("affixloot_best_kills", String(hiBestKills));}
+    // Unlock next level on victory (non-practice)
+    if(!practice && currentLevelConfig){
+      const idx = LEVELS.findIndex(l=>l.id===currentLevelConfig.id);
+      if(idx>=0 && idx<LEVELS.length-1){
+        const nextId = LEVELS[idx+1].id;
+        if(!unlockedLevels.includes(nextId)){
+          unlockedLevels.push(nextId);
+          localStorage.setItem("affixloot_unlocked_levels", JSON.stringify(unlockedLevels));
+        }
+      }
+    }
     overlay.classList.remove("hidden");
     const oc = document.getElementById("overlayCard");
     if(oc) oc.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="Victory!";
-    ovSub.innerHTML=`Round complete! Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
+    ovSub.innerHTML=`Round complete! Level <b>${currentLevelConfig ? currentLevelConfig.id : selectedLevelId}</b> • Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
     ovBtns.innerHTML="";
     const again=document.createElement("button");
     again.textContent="Run it back";
