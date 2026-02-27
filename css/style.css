@@ -25,7 +25,7 @@
     html,body{height:100%;}
     body{
       margin:0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-family: "Press Start 2P", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
       color:var(--text);
       background:
         radial-gradient(1200px 800px at 70% 15%, rgba(74,116,255,.18), transparent 60%),
@@ -169,78 +169,152 @@
       padding:0; height:100%; display:flex; flex-direction:column;
     }
 
-    /* Main menu: image background + four boxes */
+    /* Main menu: image + four boxes (position/size as you had them) */
     .menuMainWrap{
       position:relative;
-      width:100%; height:100%;
-      background: url("../assets/graphics/Main Menu.png") center/cover no-repeat;
+      width:100%;
+      height:100%;
       display:flex;
-      align-items:center;
-      justify-content:center;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding: 24px 204px 74px 24px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .menuMainBg{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+      z-index: 0;
     }
     .menuMainGrid{
+      position: relative;
+      z-index: 1;
       display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:20px 24px;
-      max-width:520px;
-      padding:24px;
+      grid-template-columns: 526px 526px;
+      grid-template-rows: 1fr 1fr;
+      gap: 14px 14px;
+      width: 1066px;
+      max-width: calc(100vw - 48px);
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
     }
     .menuBox{
       display:flex;
-      align-items:center;
-      justify-content:center;
-      min-height:72px;
-      padding:16px 20px;
-      border-radius:16px;
-      border:2px solid rgba(255,255,255,.22);
-      background: rgba(0,0,0,.45);
-      color:#EAF2FF;
-      font-weight:900;
-      font-size:17px;
-      letter-spacing:.5px;
-      cursor:pointer;
-      transition: transform .1s ease, background .15s ease, border-color .15s ease, filter .15s ease;
-      box-shadow: 0 8px 32px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.06);
+      align-items: flex-start;
+      justify-content: flex-start;
+      min-height: 0;
+      height: 150px;
+      padding: 16px 18px;
+      border-radius: 0;
+      border: none;
+      background: rgba(5, 10, 24, 0.94);
+      color: #EAF2FF;
+      font-weight: 900;
+      font-size: 15px;
+      letter-spacing: .4px;
+      cursor: pointer;
+      transition: transform .1s ease, background .15s ease, filter .15s ease;
+      box-shadow: none;
+      text-align: left;
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+      -webkit-mask-image: linear-gradient(to right, transparent 0, black 60px, black calc(100% - 60px), transparent 100%);
+      mask-image: linear-gradient(to right, transparent 0, black 60px, black calc(100% - 60px), transparent 100%);
+      -webkit-mask-size: 100% 100%;
+      mask-size: 100% 100%;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
     }
     .menuBox:hover{
-      background: rgba(0,0,0,.55);
-      border-color: rgba(255,255,255,.35);
+      background: rgba(8, 14, 32, 0.96);
       transform: translateY(-2px);
-      filter: brightness(1.08);
+      filter: brightness(1.06);
     }
     .menuBox:active{ transform: translateY(0); }
     .menuBox.menuBoxPrimary{
-      background: linear-gradient(135deg, rgba(78,166,255,.35), rgba(255,138,42,.28));
-      border-color: rgba(255,255,255,.3);
+      background: rgba(5, 10, 24, 0.94);
     }
     .menuBox.menuBoxPrimary:hover{ filter: brightness(1.12); }
     .menuBox.menuBoxPlaceholder{
-      opacity:.88;
-      cursor:default;
+      opacity: .92;
     }
-    .menuBox.menuBoxPlaceholder:hover{ transform:none; }
+    .menuBox.menuBoxPlaceholder:hover{ transform: translateY(-2px); }
+
+    /* Start Looting!, Upgrades, Choose Level: 50px text height, centered, uppercase, retro font, palette colors */
+    .menuBox.menuBoxPrimary,
+    .menuBox.menuBoxPlaceholder{
+      text-align: center;
+      justify-content: center;
+      align-items: center;
+      font-size: 50px;
+      line-height: 1;
+      text-transform: uppercase;
+      font-family: "Press Start 2P", ui-monospace, monospace;
+    }
+    #btnStartLooting{
+      color: var(--gold);
+      animation: c64colorCycle 3.2s steps(1) infinite;
+    }
+    @keyframes c64colorCycle{
+      0%   { color: #352879; }   /* C64 blue */
+      20%  { color: #70a4b2; }   /* C64 cyan */
+      40%  { color: #b8c76f; }   /* C64 yellow-green */
+      60%  { color: #9d6751; }  /* C64 orange */
+      80%  { color: #8b3f96; }   /* C64 magenta */
+      100% { color: #352879; }
+    }
+    #btnUpgrades{ color: var(--uncommon); }
+    #btnChooseLevel{ color: var(--xp); }
+
     @media (max-width: 560px){
-      .menuMainGrid{ grid-template-columns: 1fr; max-width:320px; }
+      .menuMainGrid{ width: 100%; grid-template-columns: 1fr; grid-template-rows: auto; }
+      .menuMainWrap{ padding: 16px; }
     }
 
     .menuBox.menuBoxVolume{
-      grid-column: 1 / -1;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      align-items:stretch;
-      cursor:default;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: stretch;
+      justify-content: center;
+      cursor: default;
+      height: 150px;
     }
-    .menuBox.menuBoxVolume:hover{ transform:none; }
-    .volumeTitle{ font-size:14px; font-weight:900; margin-bottom:4px; }
+    .menuBox.menuBoxVolume:hover{ transform: none; }
     .volumeControlRow{
-      display:flex;
-      align-items:center;
-      gap:10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      text-align: center;
     }
-    .volumeLabel{ font-size:13px; font-weight:800; min-width:100px; }
-    .volumeSlider{ flex:1; min-width:80px; height:8px; accent-color: var(--xp); }
-    .volumePct{ font-size:12px; font-weight:800; min-width:36px; text-align:right; }
+    .volumeControlRowMusic{ color: var(--hp); }
+    .volumeControlRowMusic .volumeLabel,
+    .volumeControlRowMusic .volumePct{ color: var(--hp); }
+    .volumeControlRowMusic .volumeSlider{ accent-color: var(--hp); }
+    .volumeControlRowSfx{ color: var(--legendary); }
+    .volumeControlRowSfx .volumeLabel,
+    .volumeControlRowSfx .volumePct{ color: var(--legendary); }
+    .volumeControlRowSfx .volumeSlider{ accent-color: var(--legendary); }
+    .volumeSliderWrap{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 100%;
+    }
+    .volumeLabel{ font-family: "Press Start 2P", ui-monospace, monospace; font-size: 25px; line-height: 1; font-weight: 800; }
+    .volumeSlider{ flex: 1; min-width: 0; height: 8px; }
+    .volumePct{ font-size: 14px; font-weight: 800; font-family: "Press Start 2P", ui-monospace, monospace; }
     .pauseVolumeWrap{
       padding:12px 0 0 0;
       border-top:1px solid rgba(255,255,255,.1);

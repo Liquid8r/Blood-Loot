@@ -6,7 +6,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "serve . -l $PORT"
+    "start": "node scripts/serve.js"
   },
   "dependencies": {
     "serve": "^14.2.4"

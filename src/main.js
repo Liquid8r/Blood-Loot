@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.002";
+  const GAME_VERSION = "1.003";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -94,15 +94,19 @@
     const m = Math.round(musicVol*100);
     const s = Math.round(sfxVol*100);
     return `
-      <div class="volumeControlRow">
+      <div class="volumeControlRow volumeControlRowMusic">
         <label class="volumeLabel">Music</label>
-        <input type="range" id="volumeMusic" min="0" max="100" value="${m}" class="volumeSlider"/>
-        <span class="volumePct" id="volumeMusicPct">${m}%</span>
+        <div class="volumeSliderWrap">
+          <input type="range" id="volumeMusic" min="0" max="100" value="${m}" class="volumeSlider"/>
+          <span class="volumePct" id="volumeMusicPct">${m}%</span>
+        </div>
       </div>
-      <div class="volumeControlRow">
+      <div class="volumeControlRow volumeControlRowSfx">
         <label class="volumeLabel">Sound effects</label>
-        <input type="range" id="volumeSfx" min="0" max="100" value="${s}" class="volumeSlider"/>
-        <span class="volumePct" id="volumeSfxPct">${s}%</span>
+        <div class="volumeSliderWrap">
+          <input type="range" id="volumeSfx" min="0" max="100" value="${s}" class="volumeSlider"/>
+          <span class="volumePct" id="volumeSfxPct">${s}%</span>
+        </div>
       </div>
     `;
   }
@@ -339,6 +343,7 @@
     dashCD:0,
     dashIx:0,
     dashIy:0,
+    dashPending: false,
 
     xp:0,
     level:1,
@@ -479,12 +484,19 @@
       name = `${pick(prefixes)} ${core}`;
       if(rarity==="rare" || rarity==="legendary") name += ` ${pick(suffixes)}`;
     }
-    return {type, rarity, icon, name, base, affixes};
+    return { type, rarity, tier, icon, name, base, affixes };
+  }
+
+  /** Tier from item (1–4). Used for scrap value and balance; items store tier at creation. */
+  function getItemTier(it) {
+    if (!it) return 1;
+    if (it.tier != null && it.tier >= 1 && it.tier <= 4) return it.tier;
+    return it.rarity === "common" ? 1 : it.rarity === "uncommon" ? 2 : it.rarity === "rare" ? 3 : 4;
   }
 
   function itemScore(it){
     if(!it) return -999;
-    const tier = it.rarity==="common"?1:it.rarity==="uncommon"?2:it.rarity==="rare"?3:4;
+    const tier = getItemTier(it);
     return tier*10 + it.affixes.length*3 + (it.base?.dmg||0)*0.12 + (it.base?.shield||0)*0.06 + (it.base?.pickup||0)*0.05 + (it.base?.xp||0)*0.20;
   }
   function slotForType(type){
@@ -874,7 +886,7 @@
     overlay.classList.remove("hidden");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent = "Loot — use arrow keys to choose";
-    ovSub.innerHTML = `←/→ select box • <span class="keycap">E</span> confirm`;
+    ovSub.innerHTML = `←/→ select box • <span class="keycap">E</span> or <span class="keycap">Space</span> confirm`;
 
     ovBtns.innerHTML="";
 
@@ -940,6 +952,7 @@
     compareLeftCardRef=null;
     compareRightCardRef=null;
     overlay.classList.add("hidden");
+    if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     paused=false;
     if(runMusic && musicVol>0){ applyMusicVolume(); runMusic.play().catch(()=>{}); }
 
@@ -947,6 +960,7 @@
   }
 
   // ========= Drops / XP =========
+  // Blood drop rules (B2): use getBloodTypesForLevel(currentLevelConfig.id) / getRandomBloodTypeForLevel(currentLevelConfig.id).
   function dropXP(x,y, elite=false, boss=false){
     const n = boss ? randi(6,10) : elite ? randi(3,5) : randi(1,2);
     for(let i=0;i<n;i++){
@@ -1209,7 +1223,7 @@
         compareSelectionIndex=1;
         updateCompareSelection();
       }
-    } else if(k==="e"){
+    } else if(k==="e" || k==="space"){
       if(canAcceptCompareKey(k)){
         e.preventDefault();
         ensureAudio();
@@ -1285,12 +1299,12 @@
 
     ovBody.innerHTML=`
       <div class="menuMainWrap">
+        <img class="menuMainBg" src="assets/graphics/Main Menu.png" alt="" />
         <div class="menuMainGrid">
           <button type="button" class="menuBox menuBoxPrimary" id="btnStartLooting">Start Looting!</button>
           <button type="button" class="menuBox menuBoxPlaceholder" id="btnUpgrades">Upgrades</button>
           <button type="button" class="menuBox menuBoxPlaceholder" id="btnChooseLevel">Choose Level</button>
           <div class="menuBox menuBoxVolume" id="volumeBox">
-            <div class="volumeTitle">Audio</div>
             ${getVolumeControlsHTML()}
           </div>
         </div>
@@ -1465,7 +1479,7 @@
       ovBtns.innerHTML="";
       const resume=document.createElement("button");
       resume.textContent="Resume";
-      resume.onclick=()=>{ overlay.classList.add("hidden"); paused=false; tLast = now(); }; // NEW: reset dt source on resume
+      resume.onclick=()=>{ overlay.classList.add("hidden"); if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); paused=false; tLast = now(); };
       const restart=document.createElement("button");
       restart.textContent="Restart";
       restart.onclick=()=>startGame(practice);
@@ -1477,7 +1491,6 @@
       ovBtns.appendChild(menu);
       ovBody.innerHTML=`
         <div class="pauseVolumeWrap">
-          <div class="volumeTitle">Audio</div>
           ${getVolumeControlsHTML()}
         </div>
         <div class="pauseStatsWrap">
@@ -1518,6 +1531,7 @@
       attachVolumeListeners(ovBody);
     } else {
       overlay.classList.add("hidden");
+      if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
       tLast = now(); // NEW: prevents dt spike & keeps time frozen while paused
     }
   }
@@ -1587,6 +1601,7 @@
     player.dashCD=0;
     player.dashIx=0;
     player.dashIy=0;
+    player.dashPending=false;
 
     equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
     player.levelBonuses={};
@@ -1617,6 +1632,7 @@
     renderEquipMini();
 
     overlay.classList.add("hidden");
+    if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     running=true; paused=false; inCompare=false;
 
     const runTrack = 1 + Math.floor(Math.random() * 5);
@@ -1775,13 +1791,22 @@
     player.dashCD=Math.max(0, player.dashCD-dt);
     let speed=player.moveSpeed*DPR;
 
-    if(keys.has("space") && player.dashCD<=0){
-      player.dashT=BASE.dashDur;
-      player.dashCD=BASE.dashCD;
-      player.invuln=Math.max(player.invuln,0.12);
-      player.dashIx=ix;
-      player.dashIy=iy;
-      beep({freq:620,dur:0.06,type:"triangle",gain:0.05,slide:1.4});
+    // Defer dash direction by one frame so all keydowns (e.g. W+A+Space) are in keys set.
+    // Fixes diagonal dash (e.g. up-left) when Space is delivered before arrow keys locally/debug.
+    if(player.dashPending){
+      const dx=(right?1:0)-(left?1:0), dy=(down?1:0)-(up?1:0);
+      const dl=Math.hypot(dx,dy);
+      if(dl>0){
+        player.dashIx=dx/dl;
+        player.dashIy=dy/dl;
+        player.dashT=BASE.dashDur;
+        player.dashCD=BASE.dashCD;
+        player.invuln=Math.max(player.invuln,0.12);
+        beep({freq:620,dur:0.06,type:"triangle",gain:0.05,slide:1.4});
+      }
+      player.dashPending=false;
+    } else if(keys.has("space") && player.dashCD<=0 && !player.dashT){
+      player.dashPending=true;
     }
     if(player.dashT>0){
       player.dashT-=dt;
@@ -2079,7 +2104,7 @@
     ctx.fill();
     ctx.restore();
 
-    glowCircle(player.x, player.y, player.r*0.85, "rgba(124,255,178,0.70)", 0.30, 26);
+    glowCircle(player.x, player.y, player.r*0.85, "rgba(120,180,255,0.65)", 0.30, 26);
 
     const blinkAlpha = (player.invuln > 0.4) ? (0.4 + 0.6 * Math.abs(Math.sin(t * 18))) : 1;
     ctx.save();
@@ -2087,10 +2112,11 @@
 
     const bodyGrad=ctx.createRadialGradient(player.x-player.r*0.4, player.y-player.r*0.5, 2, player.x, player.y, player.r*1.6);
     bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
-    bodyGrad.addColorStop(0.25, "rgba(124,255,178,0.85)");
-    bodyGrad.addColorStop(1, "rgba(10,18,48,0.95)");
+    bodyGrad.addColorStop(0.2, "rgba(200,220,255,0.9)");
+    bodyGrad.addColorStop(0.5, "rgba(100,140,200,0.85)");
+    bodyGrad.addColorStop(1, "rgba(30,50,90,0.95)");
     ctx.fillStyle=bodyGrad;
-    ctx.strokeStyle="rgba(255,255,255,0.18)";
+    ctx.strokeStyle="rgba(200,220,255,0.35)";
     ctx.lineWidth=2*DPR;
     ctx.beginPath();
     ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
@@ -2102,7 +2128,7 @@
     if(player.dashT>0){
       ctx.save();
       ctx.globalAlpha=0.25;
-      ctx.strokeStyle="rgba(124,255,178,0.85)";
+      ctx.strokeStyle="rgba(120,180,255,0.85)";
       ctx.lineWidth=4*DPR;
       ctx.beginPath();
       ctx.arc(player.x, player.y, player.r*2.0, 0, Math.PI*2);
@@ -2132,6 +2158,31 @@
       ctx.stroke();
       ctx.restore();
     }
+
+    // Sci-fi glass dome helmet (space-style bubble over head)
+    const domeR = player.r * 0.92;
+    ctx.save();
+    ctx.globalAlpha = blinkAlpha;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y - player.r*0.15, domeR, 0, Math.PI*2);
+    const domeGrad = ctx.createRadialGradient(
+      player.x - domeR*0.3, player.y - player.r*0.4, 0,
+      player.x, player.y - player.r*0.15, domeR
+    );
+    domeGrad.addColorStop(0, "rgba(220,240,255,0.55)");
+    domeGrad.addColorStop(0.5, "rgba(180,220,255,0.25)");
+    domeGrad.addColorStop(1, "rgba(140,200,255,0.12)");
+    ctx.fillStyle = domeGrad;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 1.5*DPR;
+    ctx.stroke();
+    // Glass highlight (comic-style reflection)
+    ctx.beginPath();
+    ctx.ellipse(player.x - domeR*0.35, player.y - player.r*0.5, domeR*0.2, domeR*0.35, -0.4, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.fill();
+    ctx.restore();
 
     ctx.save();
     ctx.globalAlpha = blinkAlpha;
