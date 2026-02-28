@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.003";
+  const GAME_VERSION = "1.003.5";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -234,6 +234,11 @@
     bossSpawnAt: 150,
   };
 
+  // ========= Dev/Test toggles =========
+  // v1.003.5: temporary test mode where we only spawn a small number of
+  // Skittering Mouse enemies and disable all other mob types and bosses.
+  const TEST_SINGLE_MOB_MODE = true;
+
   // ========= Levels (1-1 = current board; beat to unlock 1-2, then 1-3) =========
   const LEVELS = [
     { id: "1-1", name: "1-1", roundSeconds: 150, spawnScale: 1,    enemyHpScale: 1,   bossHpScale: 1,   threatDivisor: 1800, minibossPct: 0.47, bossPct: 0.93 },
@@ -254,7 +259,7 @@
       return;
     }
     if(["w","a","s","d","arrowup","arrowleft","arrowdown","arrowright"," "].includes(k) || e.key===" ") e.preventDefault();
-    if(k==="p" && running){ togglePause(); return; }
+    if((k==="p" || k==="escape") && running){ togglePause(); return; }
     keys.add(k===" " ? "space" : k);
   },{passive:false});
   addEventListener("keyup",(e)=>{
@@ -344,6 +349,7 @@
     dashIx:0,
     dashIy:0,
     dashPending: false,
+    lastDir: "front",
 
     xp:0,
     level:1,
@@ -380,6 +386,42 @@
     } catch(e){ return ["1-1"]; }
   })();
   let currentLevelConfig = null; // set at run start from getLevelConfig(selectedLevelId)
+
+  // Skittering Mouse sprites (2-frame animation: move1, move2)
+  const skMouseSprites = {
+    base: null,
+    move1: null,
+    move2: null,
+    gape: null,
+  };
+  (function preloadSkitteringMouseSprites(){
+    const sp = (name) => "assets/sprites/skittering-mouse/" + encodeURIComponent(name);
+    skMouseSprites.base = new Image();
+    skMouseSprites.base.src = sp("Skittering_Mouse1-removebg-preview.png");
+    skMouseSprites.move1 = new Image();
+    skMouseSprites.move1.src = sp("Skittering_Mouse1-removebg-preview.png");
+    skMouseSprites.move2 = new Image();
+    skMouseSprites.move2.src = sp("Skittering_mouse2-removebg-preview.png");
+    skMouseSprites.gape = null;
+  })();
+
+  // Player sprites: front/back animasjon + idle når stå stille.
+  const playerSprites = { front: [], back: [], frontIdle: null, backIdle: null };
+  (function preloadPlayerSprites(){
+    const base = "assets/sprites/Main_Character/";
+    const enc = (name) => base + encodeURIComponent(name);
+    const load = (path) => { const img = new Image(); img.src = path; return img; };
+    playerSprites.front = [
+      load(enc("Main_Character_Front1.png")),
+      load(enc("Main_Character_Front2a.png"))
+    ];
+    playerSprites.back = [
+      load(enc("Main_Character_Behind1.png")),
+      load(enc("Main_Character_Behind2.png"))
+    ];
+    playerSprites.frontIdle = load(enc("Front_Idle.png"));
+    playerSprites.backIdle = load(enc("Back_Idle.png"));
+  })();
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -1042,21 +1084,24 @@
 
     const baseR = isElite ? rand(16,20) : rand(11,15);
     const hp = isElite ? rand(65,90) : rand(18,28);
-    const sp = (isElite ? rand(64,80) : rand(78,102)) * 1.5;
-
-    const types=[{icon:"👾"},{icon:"🧟"},{icon:"🕷️"},{icon:"🦂"}];
-    const t=pick(types);
+    const baseSp = (isElite ? rand(64,80) : rand(78,102)) * 1.5;
+    const spMult = (1/1.5) + Math.random() * (1.5 - 1/1.5);
+    const sp = baseSp * spMult;
+    const contactDmg = isElite ? 10 : 8;
 
     enemies.push({
-      kind: isElite ? "elite" : "mob",
+      // In this test build, all regular enemies are Skittering Mice.
+      kind: "skitteringMouse",
       x,y, r: baseR*DPR,
       hp: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
       maxHP: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
       sp: sp*DPR,
       elite: isElite,
       boss: false,
-      icon: t.icon,
-      hitFlash:0
+      icon: "🐭",
+      contactDmg,
+      hitFlash:0,
+      animOffset: Math.random()*10
     });
   }
 
@@ -1602,6 +1647,7 @@
     player.dashIx=0;
     player.dashIy=0;
     player.dashPending=false;
+    player.lastDir="front";
 
     equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
     player.levelBonuses={};
@@ -1643,7 +1689,11 @@
     if(musicVol>0) runMusic.play().catch(()=>{});
 
     // softer start
-    for(let i=0;i<4;i++) spawnEnemy(false);
+    if(TEST_SINGLE_MOB_MODE){
+      for(let i=0;i<14;i++) spawnEnemy(false);
+    } else {
+      for(let i=0;i<4;i++) spawnEnemy(false);
+    }
     ensureAudio();
   }
 
@@ -1687,7 +1737,12 @@
   // ========= Main loop =========
   function loop(){
     requestAnimationFrame(loop);
-    render();
+    try {
+      render();
+    } catch (err) {
+      console.error("Render error:", err);
+      return;
+    }
 
     // NOTE: Hard freeze time handled by not advancing gameTime when paused/not running
     if(!running || paused) return;
@@ -1709,7 +1764,7 @@
     }
 
     // miniboss / boss timing from level (% of round)
-    if(!practice){
+    if(!practice && !TEST_SINGLE_MOB_MODE){
       const minibossApproachAt = roundSeconds * lvl.minibossPct * 0.9;
       const minibossSpawnAt = roundSeconds * lvl.minibossPct;
       const bossApproachAt = roundSeconds * lvl.bossPct - 8;
@@ -1757,14 +1812,16 @@
 
     // spawning: only before round end
     if(!roundEnd){
-      threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
-      const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
-      const spawnsPerSec = baseRate * threat * 0.45;
-      spawnAcc += spawnsPerSec*dt;
-      while(spawnAcc>=1){
-        spawnAcc -= 1;
-        const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
-        spawnEnemy(Math.random()<eliteChance);
+      if(!TEST_SINGLE_MOB_MODE){
+        threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
+        const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
+        const spawnsPerSec = baseRate * threat * 0.45;
+        spawnAcc += spawnsPerSec*dt;
+        while(spawnAcc>=1){
+          spawnAcc -= 1;
+          const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
+          spawnEnemy(Math.random()<eliteChance);
+        }
       }
     } else {
       threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
@@ -1819,6 +1876,8 @@
     }
     player.x=clamp(player.x+player.vx*dt, 20*DPR, W-20*DPR);
     player.y=clamp(player.y+player.vy*dt, 20*DPR, H-20*DPR);
+    const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
+    if (plSpeed > 0.5*DPR) player.lastDir = (player.vy || 0) < 0 ? "back" : "front";
 
     // slow aura
     const aura=player.slowAura;
@@ -1837,7 +1896,8 @@
 
       const rr=(player.r+e.r);
       if(dx*dx+dy*dy < rr*rr){
-        takeDamage(e.boss?18: e.elite?12:7);
+        const contact = e.contactDmg != null ? e.contactDmg : (e.boss?18: e.elite?12:7);
+        takeDamage(contact);
         if(player.thorns>0){
           const th=Math.round((e.boss?18:e.elite?10:6)*player.thorns);
           if(th>0) hitEnemy(e, th);
@@ -2014,17 +2074,49 @@
     ctx.closePath();
   }
 
+  // Mall 1st floor placeholder floor: tiled mall-like pattern in world space
+  function drawMallFloorPlaceholder(){
+    const tile = 48 * DPR;
+    const w = Math.ceil(W / tile) + 2;
+    const h = Math.ceil(H / tile) + 2;
+    ctx.save();
+    ctx.fillStyle = "#3d362e";
+    ctx.fillRect(-tile, -tile, W + tile * 2, H + tile * 2);
+    for (let i = -1; i < w; i++) {
+      for (let j = -1; j < h; j++) {
+        ctx.fillStyle = (i + j) % 2 === 0 ? "#4a4439" : "#353028";
+        ctx.fillRect(i * tile, j * tile, tile + 1, tile + 1);
+      }
+    }
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 1 * DPR;
+    for (let i = -1; i < w; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * tile, -tile);
+      ctx.lineTo(i * tile, H + tile);
+      ctx.stroke();
+    }
+    for (let j = -1; j < h; j++) {
+      ctx.beginPath();
+      ctx.moveTo(-tile, j * tile);
+      ctx.lineTo(W + tile, j * tile);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function render(){
     ctx.clearRect(0,0,W,H);
 
-    const g=ctx.createRadialGradient(W*0.64, H*0.22, 10, W*0.64, H*0.22, Math.max(W,H)*0.75);
-    g.addColorStop(0, "rgba(78,166,255,0.075)");
-    g.addColorStop(0.55, "rgba(255,138,42,0.040)");
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle=g;
-    ctx.fillRect(0,0,W,H);
+    // Camera: keep player visually centered, move world (including floor) relative to player.
+    const camOffsetX = W*0.5 - player.x;
+    const camOffsetY = H*0.5 - player.y;
+    ctx.save();
+    ctx.translate(camOffsetX, camOffsetY);
 
-    drawGrid();
+    // For now use mall-like tiled floor for 1-1 (and other levels) so ground always scrolls.
+    drawMallFloorPlaceholder();
 
     for(const L of lootDrops) drawLoot(L);
     for(const o of orbs) drawOrb(o);
@@ -2035,6 +2127,8 @@
 
     drawPlayer();
     for(const pop of tokenPops) drawTokenPop(pop);
+
+    ctx.restore();
 
     if(victoryPhase){
       ctx.save();
@@ -2096,6 +2190,40 @@
   function drawPlayer(){
     const t=now()*0.001;
 
+    function drawPlayerFallback(){
+      ctx.save();
+      ctx.globalAlpha = (player.invuln > 0.4) ? (0.4 + 0.6 * Math.abs(Math.sin(t * 18))) : 1;
+      const bodyGrad=ctx.createRadialGradient(player.x-player.r*0.4, player.y-player.r*0.5, 2, player.x, player.y, player.r*1.6);
+      bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
+      bodyGrad.addColorStop(0.2, "rgba(200,220,255,0.9)");
+      bodyGrad.addColorStop(0.5, "rgba(100,140,200,0.85)");
+      bodyGrad.addColorStop(1, "rgba(30,50,90,0.95)");
+      ctx.fillStyle=bodyGrad;
+      ctx.strokeStyle="rgba(200,220,255,0.35)";
+      ctx.lineWidth=2*DPR;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+      const domeR = player.r * 0.92;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y - player.r*0.15, domeR, 0, Math.PI*2);
+      const domeGrad = ctx.createRadialGradient(player.x - domeR*0.3, player.y - player.r*0.4, 0, player.x, player.y - player.r*0.15, domeR);
+      domeGrad.addColorStop(0, "rgba(220,240,255,0.55)");
+      domeGrad.addColorStop(0.5, "rgba(180,220,255,0.25)");
+      domeGrad.addColorStop(1, "rgba(140,200,255,0.12)");
+      ctx.fillStyle = domeGrad;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.lineWidth = 1.5*DPR;
+      ctx.stroke();
+      ctx.font = `${16*DPR}px ui-sans-serif`;
+      ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillStyle="rgba(0,0,0,0.65)";
+      ctx.fillText("😺", player.x, player.y+1*DPR);
+      ctx.restore();
+    }
+
     ctx.save();
     ctx.globalAlpha=0.18;
     ctx.fillStyle="rgba(0,0,0,0.7)";
@@ -2110,19 +2238,41 @@
     ctx.save();
     ctx.globalAlpha = blinkAlpha;
 
-    const bodyGrad=ctx.createRadialGradient(player.x-player.r*0.4, player.y-player.r*0.5, 2, player.x, player.y, player.r*1.6);
-    bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
-    bodyGrad.addColorStop(0.2, "rgba(200,220,255,0.9)");
-    bodyGrad.addColorStop(0.5, "rgba(100,140,200,0.85)");
-    bodyGrad.addColorStop(1, "rgba(30,50,90,0.95)");
-    ctx.fillStyle=bodyGrad;
-    ctx.strokeStyle="rgba(200,220,255,0.35)";
-    ctx.lineWidth=2*DPR;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
-    ctx.fill();
-    ctx.stroke();
+    const spriteReady = (img) => img && img.complete && img.naturalWidth > 0;
+    const hasFront = playerSprites.front.length >= 1 && spriteReady(playerSprites.front[0]);
+    const hasBack = playerSprites.back.length >= 1 && spriteReady(playerSprites.back[0]);
 
+    if (hasFront && hasBack) {
+      const vy = player.vy || 0;
+      const speed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
+      const standing = speed <= 0.5*DPR;
+      const lastD = player.lastDir || "front";
+      let img = null;
+      if (standing) {
+        const idle = lastD === "back" ? playerSprites.backIdle : playerSprites.frontIdle;
+        if (idle && spriteReady(idle)) img = idle;
+        if (!img) {
+          const dir = lastD;
+          const frames = playerSprites[dir];
+          img = frames[0];
+        }
+      }
+      if (!img) {
+        const dir = vy < 0 ? "back" : "front";
+        const frames = playerSprites[dir];
+        const frameIndex = Math.min(Math.floor((t * 4 + (player.animOffset || 0)) % 2), frames.length - 1);
+        img = frames[frameIndex];
+      }
+      if (img && spriteReady(img)) {
+        const size = player.r * 16;
+        const w = size, h = size;
+        ctx.drawImage(img, player.x - w/2, player.y - h/2, w, h);
+      } else {
+        drawPlayerFallback();
+      }
+    } else {
+      drawPlayerFallback();
+    }
     ctx.restore();
 
     if(player.dashT>0){
@@ -2158,84 +2308,84 @@
       ctx.stroke();
       ctx.restore();
     }
-
-    // Sci-fi glass dome helmet (space-style bubble over head)
-    const domeR = player.r * 0.92;
-    ctx.save();
-    ctx.globalAlpha = blinkAlpha;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y - player.r*0.15, domeR, 0, Math.PI*2);
-    const domeGrad = ctx.createRadialGradient(
-      player.x - domeR*0.3, player.y - player.r*0.4, 0,
-      player.x, player.y - player.r*0.15, domeR
-    );
-    domeGrad.addColorStop(0, "rgba(220,240,255,0.55)");
-    domeGrad.addColorStop(0.5, "rgba(180,220,255,0.25)");
-    domeGrad.addColorStop(1, "rgba(140,200,255,0.12)");
-    ctx.fillStyle = domeGrad;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.5)";
-    ctx.lineWidth = 1.5*DPR;
-    ctx.stroke();
-    // Glass highlight (comic-style reflection)
-    ctx.beginPath();
-    ctx.ellipse(player.x - domeR*0.35, player.y - player.r*0.5, domeR*0.2, domeR*0.35, -0.4, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(255,255,255,0.35)";
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    ctx.globalAlpha = blinkAlpha;
-    ctx.font = `${16*DPR}px ui-sans-serif`;
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillStyle="rgba(0,0,0,0.65)";
-    ctx.fillText("😺", player.x, player.y+1*DPR);
-    ctx.restore();
   }
 
   function drawEnemy(e){
+    const hpPct=clamp(e.hp/e.maxHP,0,1);
+    const isBoss = e.boss;
+    const isSkMouse = e.kind === "skitteringMouse";
+
+    // Shadow
     ctx.save();
     ctx.globalAlpha=0.15;
     ctx.fillStyle="rgba(0,0,0,0.8)";
     ctx.beginPath();
-    ctx.ellipse(e.x, e.y+12*DPR, e.r*1.08, e.r*0.70, 0, 0, Math.PI*2);
+    ctx.ellipse(e.x, e.y+6*DPR, e.r*0.54, e.r*0.35, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
 
-    const hpPct=clamp(e.hp/e.maxHP,0,1);
-    const isBoss = e.boss;
+    const spriteReady = (img) => img && img.complete && img.naturalWidth > 0;
+    const hasMoveFrames = spriteReady(skMouseSprites.move1) && spriteReady(skMouseSprites.move2);
+    const hasAnySprite = spriteReady(skMouseSprites.base) || hasMoveFrames;
+    if (isSkMouse && hasAnySprite) {
+      // Only move1 and move2 (2-frame run loop); no gape frame.
+      const t = now()*0.001 + (e.animOffset || 0);
+      let img = null;
+      if (hasMoveFrames) {
+        const phase = Math.floor(t*10)%2;
+        img = phase === 0 ? skMouseSprites.move1 : skMouseSprites.move2;
+      } else if (spriteReady(skMouseSprites.base)) {
+        img = skMouseSprites.base;
+      }
+      if (img && spriteReady(img)) {
+        const size = e.r*4.8;
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, e.x - size/2, e.y - size/2, size, size);
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.font = `${18*DPR}px ui-sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.fillText(e.icon, e.x, e.y + 1*DPR);
+        ctx.restore();
+      }
+    } else {
+      const glowCol = isBoss ? "rgba(255,210,77,0.85)" : e.elite ? "rgba(255,138,42,0.86)" : "rgba(255,77,109,0.78)";
+      glowCircle(e.x,e.y,e.r*0.9, glowCol, isBoss?0.34:(e.elite?0.26:0.20), isBoss?44:(e.elite?34:26));
 
-    const glowCol = isBoss ? "rgba(255,210,77,0.85)" : e.elite ? "rgba(255,138,42,0.86)" : "rgba(255,77,109,0.78)";
-    glowCircle(e.x,e.y,e.r*0.9, glowCol, isBoss?0.34:(e.elite?0.26:0.20), isBoss?44:(e.elite?34:26));
-
-    const grad=ctx.createRadialGradient(e.x-e.r*0.4, e.y-e.r*0.5, 2, e.x, e.y, e.r*1.7);
-    grad.addColorStop(0, "rgba(255,255,255,0.22)");
-    grad.addColorStop(0.3, isBoss ? "rgba(255,210,77,0.20)" : e.elite ? "rgba(255,138,42,0.24)" : "rgba(255,77,109,0.20)");
-    grad.addColorStop(1, "rgba(6,8,18,0.95)");
-    ctx.fillStyle=grad;
-    ctx.strokeStyle = isBoss ? "rgba(255,210,77,0.55)" : e.elite ? "rgba(255,138,42,0.42)" : "rgba(255,255,255,0.12)";
-    ctx.lineWidth=2*DPR;
-    ctx.beginPath();
-    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
-    ctx.fill();
-    ctx.stroke();
-
-    if(e.hitFlash>0){
-      ctx.save();
-      ctx.globalAlpha=0.35*(e.hitFlash/0.12);
-      ctx.fillStyle="rgba(255,255,255,0.85)";
+      const grad=ctx.createRadialGradient(e.x-e.r*0.4, e.y-e.r*0.5, 2, e.x, e.y, e.r*1.7);
+      grad.addColorStop(0, "rgba(255,255,255,0.22)");
+      grad.addColorStop(0.3, isBoss ? "rgba(255,210,77,0.20)" : e.elite ? "rgba(255,138,42,0.24)" : "rgba(255,77,109,0.20)");
+      grad.addColorStop(1, "rgba(6,8,18,0.95)");
+      ctx.fillStyle=grad;
+      ctx.strokeStyle = isBoss ? "rgba(255,210,77,0.55)" : e.elite ? "rgba(255,138,42,0.42)" : "rgba(255,255,255,0.12)";
+      ctx.lineWidth=2*DPR;
       ctx.beginPath();
-      ctx.arc(e.x,e.y,e.r*0.92,0,Math.PI*2);
+      ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
       ctx.fill();
+      ctx.stroke();
+
+      if(e.hitFlash>0){
+        ctx.save();
+        ctx.globalAlpha=0.35*(e.hitFlash/0.12);
+        ctx.fillStyle="rgba(255,255,255,0.85)";
+        ctx.beginPath();
+        ctx.arc(e.x,e.y,e.r*0.92,0,Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.font = `${(isBoss?30:(e.elite?22:18))*DPR}px ui-sans-serif`;
+      ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillStyle="rgba(255,255,255,0.92)";
+      ctx.fillText(e.icon, e.x, e.y+1*DPR);
       ctx.restore();
     }
-
-    ctx.save();
-    ctx.font = `${(isBoss?30:(e.elite?22:18))*DPR}px ui-sans-serif`;
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillStyle="rgba(255,255,255,0.92)";
-    ctx.fillText(e.icon, e.x, e.y+1*DPR);
-    ctx.restore();
 
     // HP bar
     const bw=e.r*2.2, bh=6*DPR;
