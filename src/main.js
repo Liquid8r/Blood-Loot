@@ -209,7 +209,7 @@
 
   // ========= Tuning =========
   const BASE = {
-    playerR: 12,
+    playerR: 6,
     hp: 100,
     speed: 285,        // 190 * 1.5
     dashSpeed: 795,    // 530 * 1.5
@@ -217,7 +217,7 @@
     dashCD: 0.90,
 
     baseDmg: 8,
-    baseAtk: 0.52,     // slower start so first weapon is always an upgrade
+    baseAtk: 0.82,     // attack interval (s); higher = slower fire
     bulletSpeed: 540,
     bulletLife: 0.95,
 
@@ -238,6 +238,8 @@
   // v1.003.5: temporary test mode where we only spawn a small number of
   // Skittering Mouse enemies and disable all other mob types and bosses.
   const TEST_SINGLE_MOB_MODE = true;
+  // Endless run: no round end from time; boss every 60s; extract when player chooses.
+  const ENDLESS_RUN = true;
 
   // ========= Levels (1-1 = current board; beat to unlock 1-2, then 1-3) =========
   const LEVELS = [
@@ -293,6 +295,27 @@
     {id:"thorns",   name:"Thorns",    icon:"🌵", kind:["armor","ring"],          min:10, max:26, fmt:v=>`+${v}% thorns`},
     {id:"xpGain",   name:"Wisdom",    icon:"🧠", kind:["jewel"],                min:6,  max:18, fmt:v=>`+${v}% XP gain`},
     {id:"lootInvuln",name:"Loot Ward", icon:"✨", kind:["armor","ring"],         min:0.2, max:2,  fmt:v=>`+${v.toFixed(1)}s invuln after loot`},
+    {id:"fury",     name:"Fury",      icon:"🔥", kind:["weapon","jewel"],        min:3,  max:12, fmt:v=>`+${v}% damage`},
+    {id:"brawler",  name:"Brawler",   icon:"👊", kind:["weapon","ring"],        min:4,  max:11, fmt:v=>`+${v}% damage`},
+    {id:"quickdraw",name:"Quickdraw", icon:"⚡", kind:["weapon","ring"],        min:3,  max:10, fmt:v=>`+${v}% attack speed`},
+    {id:"swiftstrike",name:"Swiftstrike",icon:"💫", kind:["weapon"],            min:5,  max:13, fmt:v=>`+${v}% attack speed`},
+    {id:"precision", name:"Precision", icon:"🎯", kind:["weapon","jewel"],      min:2,  max:8,  fmt:v=>`+${v}% crit chance`},
+    {id:"fatal",    name:"Fatal",     icon:"💀", kind:["weapon","ring"],        min:1,  max:9,  fmt:v=>`+${v}% crit chance`},
+    {id:"execution", name:"Execution",icon:"🪓", kind:["weapon","jewel"],       min:8,  max:32, fmt:v=>`+${v}% crit damage`},
+    {id:"savage",   name:"Savage",    icon:"🦁", kind:["weapon"],               min:12, max:38, fmt:v=>`+${v}% crit damage`},
+    {id:"puncture", name:"Puncture", icon:"🔪", kind:["weapon","ring"],        min:1,  max:2,  fmt:v=>`+${v} pierce`},
+    {id:"chain",    name:"Chain",     icon:"🔗", kind:["weapon","jewel"],       min:8,  max:20, fmt:v=>`+${v}% splash`},
+    {id:"vampiric", name:"Vampiric", icon:"🧛", kind:["weapon","ring"],        min:1,  max:3,  fmt:v=>`${v}% lifesteal`},
+    {id:"vigor",    name:"Vigor",    icon:"💚", kind:["armor","ring","jewel"],  min:5,  max:20, fmt:v=>`+${v} max HP`},
+    {id:"toughness", name:"Toughness",icon:"🦏", kind:["armor","jewel"],       min:7,  max:21, fmt:v=>`+${v} max HP`},
+    {id:"bastion",  name:"Bastion",  icon:"🏰", kind:["armor","ring"],         min:6,  max:24, fmt:v=>`+${v} shield`},
+    {id:"mend",     name:"Mend",     icon:"🌿", kind:["armor","ring"],          min:5,  max:14, fmt:v=>`+${v}% shield regen`},
+    {id:"sprint",   name:"Sprint",   icon:"🏃", kind:["armor","ring"],          min:2,  max:11, fmt:v=>`+${v}% move speed`},
+    {id:"draw",     name:"Draw",     icon:"🧭", kind:["ring","jewel","armor"],  min:10, max:40, fmt:v=>`+${v} pickup`},
+    {id:"chill",    name:"Chill",    icon:"❄️", kind:["armor","ring","jewel"], min:5,  max:13, fmt:v=>`-${v}% enemy speed aura`},
+    {id:"spikes",   name:"Spikes",   icon:"🦔", kind:["armor","ring"],         min:8,  max:24, fmt:v=>`+${v}% thorns`},
+    {id:"insight",  name:"Insight",  icon:"📖", kind:["jewel"],                min:5,  max:16, fmt:v=>`+${v}% XP gain`},
+    {id:"safety",   name:"Safety",   icon:"🛡️", kind:["armor","ring"],         min:0.3, max:1.5, fmt:v=>`+${v.toFixed(1)}s invuln after loot`},
   ];
 
   // ========= Stats meta =========
@@ -364,9 +387,15 @@
   let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
   let kills=0, lootCount=0, streak=0, streakT=0;
   let threat=1.0, spawnAcc=0, atkCD=0;
+  let lootPickupCooldown=0;
 
-  // Boss control
+  // Boss control (endless: mini-boss every minute, boss every 5 minutes)
   let minibossWarned=false, minibossSpawned=false, bossWarned=false, bossSpawned=false;
+  let lastSpawnedBossMinute = -1;
+  let lastSpawnedMinibossMinute = -1;
+  let lastWarningWave = 0;
+  let lastSpawnedMegaBoss = false;
+  let lastMegaBossWarned = false;
   let roundEnd=false, victoryPhase=false;
   let victorySuckAt=0;   // when to start sucking loot/XP (now + 2s when last enemy dies)
   let suckActive=false;  // strong pull on orbs and loot toward player
@@ -386,6 +415,11 @@
     } catch(e){ return ["1-1"]; }
   })();
   let currentLevelConfig = null; // set at run start from getLevelConfig(selectedLevelId)
+
+  // 1st floor map: 4x viewport; center = fountain; doors at N/S/E/W edges; 6 manholes + mall props per run
+  let mapW = 0, mapH = 0;
+  let manholes = [];
+  let mallProps = [];
 
   // Skittering Mouse sprites (2-frame animation: move1, move2)
   const skMouseSprites = {
@@ -622,22 +656,22 @@
     for(const it of items){
       for(const a of it.affixes){
         switch(a.id){
-          case "dmgPct": dmgPct += a.value; break;
-          case "asPct": asPct += a.value; break;
-          case "msPct": msPct += a.value; break;
-          case "regenPct": regenPct += a.value; break;
-          case "critPct": critAdd += a.value/100; break;
-          case "critDmg": critDmgPct += a.value/100; break;
-          case "splash": splashPct += a.value/100; break;
-          case "lifesteal": lsPct += a.value/100; break;
-          case "slowAura": slowPct += a.value/100; break;
-          case "thorns": thornsPct += a.value/100; break;
-          case "xpGain": xpPct += a.value/100; break;
-          case "hpFlat": hpFlat += a.value; break;
-          case "shieldFlat": shieldFlat += a.value; break;
-          case "pickup": pickupFlat += a.value; break;
-          case "pierce": pierceAdd += a.value; break;
-          case "lootInvuln": lootInvulnSec += a.value; break;
+          case "dmgPct": case "fury": case "brawler": dmgPct += a.value; break;
+          case "asPct": case "quickdraw": case "swiftstrike": asPct += a.value; break;
+          case "msPct": case "sprint": msPct += a.value; break;
+          case "regenPct": case "mend": regenPct += a.value; break;
+          case "critPct": case "precision": case "fatal": critAdd += a.value/100; break;
+          case "critDmg": case "execution": case "savage": critDmgPct += a.value/100; break;
+          case "splash": case "chain": splashPct += a.value/100; break;
+          case "lifesteal": case "vampiric": lsPct += a.value/100; break;
+          case "slowAura": case "chill": slowPct += a.value/100; break;
+          case "thorns": case "spikes": thornsPct += a.value/100; break;
+          case "xpGain": case "insight": xpPct += a.value/100; break;
+          case "hpFlat": case "vigor": case "toughness": hpFlat += a.value; break;
+          case "shieldFlat": case "bastion": shieldFlat += a.value; break;
+          case "pickup": case "draw": pickupFlat += a.value; break;
+          case "pierce": case "puncture": pierceAdd += a.value; break;
+          case "lootInvuln": case "safety": lootInvulnSec += a.value; break;
         }
       }
     }
@@ -989,6 +1023,8 @@
     const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
     player.invuln = Math.max(player.invuln, invulnDur);
 
+    lootPickupCooldown = 5;
+
     pendingLoot=null;
     inCompare=false;
     compareLeftCardRef=null;
@@ -1009,19 +1045,20 @@
       orbs.push({ x:x+rand(-10,10)*DPR, y:y+rand(-10,10)*DPR, r:(boss?7:elite?6:4)*DPR, vx:rand(-20,20)*DPR, vy:rand(-20,20)*DPR });
     }
   }
-  function dropLoot(x,y, elite=false, boss=false){
-    let p = boss ? 0.95 : elite ? BASE.lootDropElite : BASE.lootDropBase;
+  function dropLoot(x,y, elite=false, boss=false, miniboss=false){
+    const rawP = boss && !miniboss ? 0.72 : miniboss ? 0.52 : elite ? BASE.lootDropElite : BASE.lootDropBase;
+    let p = rawP * 0.20 * 1.20;
     if(Math.random()>p) return;
 
     const roll=Math.random();
     const type = roll<0.44 ? "weapon" : roll<0.80 ? "armor" : roll<0.93 ? "ring" : "jewel";
 
     let rarity = rollRarity();
-    const bump = boss ? 1 : elite ? 0.6 : 0;
+    const bump = boss && !miniboss ? 0.82 : miniboss ? 0.62 : elite ? 0.45 : 0;
     if(bump>0){
-      if(rarity==="common" && Math.random()<0.70*bump) rarity="uncommon";
-      if(rarity==="uncommon" && Math.random()<0.35*bump) rarity="rare";
-      if(rarity==="rare" && Math.random()<0.18*bump) rarity="legendary";
+      if(rarity==="common" && Math.random()<0.65*bump) rarity="uncommon";
+      if(rarity==="uncommon" && Math.random()<0.32*bump) rarity="rare";
+      if(rarity==="rare" && Math.random()<0.14*bump) rarity="legendary";
     }
     const item=makeItem(type,rarity);
     lootDrops.push({ x:x+rand(-14,14)*DPR, y:y+rand(-14,14)*DPR, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
@@ -1073,24 +1110,47 @@
   }
 
   // ========= Enemies & Boss =========
-  function spawnEnemy(isElite=false){
-    const margin=90*DPR;
-    let x,y;
-    const side=(Math.random()*4)|0;
-    if(side===0){ x=rand(-margin,W+margin); y=-margin; }
-    if(side===1){ x=W+margin; y=rand(-margin,H+margin); }
-    if(side===2){ x=rand(-margin,W+margin); y=H+margin; }
-    if(side===3){ x=-margin; y=rand(-margin,H+margin); }
+  function getRandomSpawnPoint(){
+    const doorInset = 40 * DPR;
+    const jitter = 15 * DPR;
+    const total = 4 + (manholes.length || 0);
+    const pick = (Math.random() * total) | 0;
+    if (pick < 4) {
+      if(pick===0) return { x: mapW/2 + rand(-jitter,jitter), y: doorInset + 8*DPR };
+      if(pick===1) return { x: mapW/2 + rand(-jitter,jitter), y: mapH - doorInset - 8*DPR };
+      if(pick===2) return { x: doorInset + 8*DPR, y: mapH/2 + rand(-jitter,jitter) };
+      return { x: mapW - doorInset - 8*DPR, y: mapH/2 + rand(-jitter,jitter) };
+    }
+    const m = manholes[pick - 4];
+    const j = 12 * DPR;
+    return { x: m.x + rand(-j, j), y: m.y + rand(-j, j) };
+  }
 
+  // Wave = 20s interval; scale 1.2^wave, capped so enemies don't one-shot or become untouchable
+  function getWaveScale(){
+    const waveIndex = Math.floor(gameTime / 20);
+    return Math.pow(1.2, waveIndex);
+  }
+  function getWaveIndex(){ return Math.floor(gameTime / 20); }
+  const WAVE_SCALE_SPEED_CAP = 1.55;
+  const WAVE_SCALE_DMG_CAP = 1.15;
+  const CONTACT_DMG_CAP_PCT = 0.28;
+  const CONTACT_DMG_ABS_CAP = 24;
+
+  function spawnEnemy(isElite=false){
+    const { x, y } = getRandomSpawnPoint();
+
+    const scale = getWaveScale();
+    const scaleSpeed = Math.min(scale, WAVE_SCALE_SPEED_CAP);
+    const scaleDmg = Math.min(scale, WAVE_SCALE_DMG_CAP);
     const baseR = isElite ? rand(16,20) : rand(11,15);
-    const hp = isElite ? rand(65,90) : rand(18,28);
-    const baseSp = (isElite ? rand(64,80) : rand(78,102)) * 1.5;
+    const hp = (isElite ? rand(65,90) : rand(18,28)) * scale;
+    const baseSp = (isElite ? rand(64,80) : rand(78,102)) * 1.5 * scaleSpeed;
     const spMult = (1/1.5) + Math.random() * (1.5 - 1/1.5);
     const sp = baseSp * spMult;
-    const contactDmg = isElite ? 10 : 8;
+    const contactDmg = Math.round((isElite ? 10 : 8) * scaleDmg);
 
     enemies.push({
-      // In this test build, all regular enemies are Skittering Mice.
       kind: "skitteringMouse",
       x,y, r: baseR*DPR,
       hp: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
@@ -1105,33 +1165,79 @@
     });
   }
 
-  function spawnBoss(isMiniboss=false){
-    const margin=120*DPR;
-    let x,y;
-    const side=(Math.random()*4)|0;
-    if(side===0){ x=rand(-margin,W+margin); y=-margin; }
-    if(side===1){ x=W+margin; y=rand(-margin,H+margin); }
-    if(side===2){ x=rand(-margin,W+margin); y=H+margin; }
-    if(side===3){ x=-margin; y=rand(-margin,H+margin); }
+  const BASE_MOUSE_R = 13;
+  // waveIndex = floor(gameTime/20). Miniboss = 3× size, 5× HP/dmg of smallest mob. Boss = 6× size, 20× HP/dmg.
+  function spawnBoss(isMiniboss=false, waveIndex=null){
+    const { x, y } = getRandomSpawnPoint();
 
-    const elapsed=gameTime;
-    const lvl = currentLevelConfig || getLevelConfig("1-1");
-    const scale = (1+elapsed/110) * (lvl.bossHpScale || 1);
-    const hpMult=isMiniboss?0.45:1;
-    const rMult=isMiniboss?0.75:1;
+    const w = typeof waveIndex === "number" && waveIndex >= 0 ? waveIndex : getWaveIndex();
+    const scale = Math.min(Math.pow(1.2, w), WAVE_SCALE_DMG_CAP);
+    const scaleSpeed = Math.min(Math.pow(1.2, w), WAVE_SCALE_SPEED_CAP);
+    const smallestMobHP = 18 * scale;
+    const smallestMobDmg = 8 * scale;
 
+    if(isMiniboss){
+      const r = BASE_MOUSE_R * 3;
+      const hp = smallestMobHP * 5;
+      const contactDmg = Math.round(smallestMobDmg * 5);
+      enemies.push({
+        kind: "skitteringMouse",
+        x,y,
+        r: r*DPR,
+        hp, maxHP: hp,
+        sp: 92*DPR * Math.min(1, scaleSpeed),
+        elite: true,
+        boss: true,
+        miniboss: true,
+        contactDmg,
+        icon: "🐭",
+        hitFlash:0,
+        animOffset: rand(0, 10)
+      });
+      return;
+    }
+
+    const r = BASE_MOUSE_R * 6;
+    const hp = smallestMobHP * 20;
+    const contactDmg = Math.round(smallestMobDmg * 20);
     enemies.push({
-      kind:"boss",
+      kind: "skitteringMouse",
       x,y,
-      r: (32*rMult)*DPR,
-      hp: 650*scale*hpMult,
-      maxHP: 650*scale*hpMult,
-      sp: 117*DPR,   // 78 * 1.5
+      r: r*DPR,
+      hp, maxHP: hp,
+      sp: 98*DPR * Math.min(1, scaleSpeed),
       elite: true,
       boss: true,
-      icon: isMiniboss?"👺":"👹",
+      miniboss: false,
+      contactDmg,
+      icon: "🐭",
       hitFlash:0,
-      pulse: rand(0,Math.PI*2)
+      animOffset: rand(0, 10)
+    });
+  }
+
+  function spawnMegaBoss(){
+    const { x, y } = getRandomSpawnPoint();
+    const scale = Math.min(Math.pow(1.2, 7), WAVE_SCALE_DMG_CAP);
+    const smallestMobHP = 18 * scale;
+    const smallestMobDmg = 8 * scale;
+    const r = BASE_MOUSE_R * 8;
+    const hp = smallestMobHP * 55;
+    const contactDmg = Math.round(smallestMobDmg * 55);
+    enemies.push({
+      kind: "skitteringMouse",
+      x,y,
+      r: r*DPR,
+      hp, maxHP: hp,
+      sp: 88*DPR,
+      elite: true,
+      boss: true,
+      miniboss: false,
+      megaBoss: true,
+      contactDmg,
+      icon: "🐭",
+      hitFlash:0,
+      animOffset: rand(0, 10)
     });
   }
 
@@ -1196,7 +1302,9 @@
 
   function takeDamage(amount){
     if(player.invuln>0) return;
-    let dmg=amount;
+    const capPct = Math.ceil(player.maxHP * CONTACT_DMG_CAP_PCT);
+    const cap = Math.min(capPct, CONTACT_DMG_ABS_CAP);
+    let dmg = Math.min(amount, cap);
     if(player.shield>0){
       const used=Math.min(player.shield,dmg);
       player.shield-=used; dmg-=used;
@@ -1215,7 +1323,7 @@
     streak++; streakT=1.8;
 
     dropXP(e.x,e.y, e.elite, e.boss);
-    dropLoot(e.x,e.y, e.elite, e.boss);
+    dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
 
     if(e.boss){
       spawnLegendaryBurst(e.x,e.y,true);
@@ -1626,7 +1734,13 @@
     enemies=[]; bullets=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
     kills=0; lootCount=0; streak=0; streakT=0;
     threat=1.0; spawnAcc=0; atkCD=0;
+    lootPickupCooldown=0;
     minibossWarned=false; minibossSpawned=false; bossWarned=false; bossSpawned=false;
+    lastSpawnedBossMinute = -1;
+    lastSpawnedMinibossMinute = -1;
+    lastWarningWave = 0;
+    lastSpawnedMegaBoss = false;
+    lastMegaBossWarned = false;
     roundEnd=false; victoryPhase=false;
     victorySuckAt=0; suckActive=false;
 
@@ -1634,7 +1748,55 @@
     tokenBarProgress = 0;
     tokenPops = [];
 
-    player.x=W/2; player.y=H/2;
+    mapW = 4 * W;
+    mapH = 4 * H;
+    const margin = 80 * DPR;
+    const manholeR = 32 * DPR;
+    const fountainCx = mapW / 2, fountainCy = mapH / 2;
+    const avoidR = (80 * 1.4 * DPR) + manholeR + 40 * DPR;
+    manholes = [];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 2; col++) {
+        const zoneW = mapW / 2, zoneH = mapH / 3;
+        let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
+        let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
+        const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
+        if (toFountain < avoidR) {
+          const angle = Math.atan2(y - fountainCy, x - fountainCx);
+          x = fountainCx + Math.cos(angle) * avoidR;
+          y = fountainCy + Math.sin(angle) * avoidR;
+        }
+        manholes.push({ x, y, r: manholeR });
+      }
+    }
+    const doorInset = 40 * DPR;
+    const propTypes = [
+      { id: "pølsebod", w: 70*DPR, h: 50*DPR, fill: "#8B4513", stroke: "#5D2E0C", sign: "🌭" },
+      { id: "klesbutikk", w: 85*DPR, h: 55*DPR, fill: "#4A6FA5", stroke: "#2E4563", sign: "👕" },
+      { id: "skobutikk", w: 65*DPR, h: 48*DPR, fill: "#2C1810", stroke: "#1a0e08", sign: "👟" },
+      { id: "kiosk", w: 55*DPR, h: 45*DPR, fill: "#C41E3A", stroke: "#8B1528", sign: "📰" },
+      { id: "blomster", w: 60*DPR, h: 50*DPR, fill: "#228B22", stroke: "#145214", sign: "🌸" },
+      { id: "søppel", w: 50*DPR, h: 45*DPR, fill: "#3d3d3d", stroke: "#252525", sign: "🗑️" },
+    ];
+    mallProps = [];
+    const zoneW = mapW / 2, zoneH = mapH / 3;
+    const pad = 55 * DPR;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 2; col++) {
+        let x = pad + rand(0, Math.max(10, zoneW - 110*DPR)) + col * zoneW;
+        let y = pad + rand(0, Math.max(10, zoneH - 90*DPR)) + row * zoneH;
+        const cx = x, cy = y;
+        if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR) {
+          const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
+          x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR);
+          y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR);
+        }
+        const T = propTypes[ mallProps.length % propTypes.length ];
+        mallProps.push({ type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
+      }
+    }
+    player.x = mapW / 2;
+    player.y = mapH / 2;
     player.vx=0; player.vy=0;
     player.level=1; player.xp=0; player.xpNeed=BASE.xpNeed;
 
@@ -1688,8 +1850,9 @@
     stopMenuMusic(); // ensure menu music is off before starting run track
     if(musicVol>0) runMusic.play().catch(()=>{});
 
-    // softer start
-    if(TEST_SINGLE_MOB_MODE){
+    if(ENDLESS_RUN){
+      for(let i=0;i<28;i++) spawnEnemy(false);
+    } else if(TEST_SINGLE_MOB_MODE){
       for(let i=0;i<14;i++) spawnEnemy(false);
     } else {
       for(let i=0;i<4;i++) spawnEnemy(false);
@@ -1758,42 +1921,92 @@
     const lvl = currentLevelConfig || getLevelConfig("1-1");
     const roundSeconds = lvl.roundSeconds;
 
-    // round end: no more spawns
-    if(!practice && elapsed>=roundSeconds && !roundEnd){
+    // round end: no more spawns (disabled in endless)
+    if(!practice && !ENDLESS_RUN && elapsed>=roundSeconds && !roundEnd){
       roundEnd=true;
     }
 
-    // miniboss / boss timing from level (% of round)
-    if(!practice && !TEST_SINGLE_MOB_MODE){
-      const minibossApproachAt = roundSeconds * lvl.minibossPct * 0.9;
-      const minibossSpawnAt = roundSeconds * lvl.minibossPct;
-      const bossApproachAt = roundSeconds * lvl.bossPct - 8;
-      const bossSpawnAt = roundSeconds * lvl.bossPct;
-      if(!minibossWarned && elapsed>=minibossApproachAt){
-        minibossWarned=true;
-        bossBanner.textContent="⚠️ MINIBOSS! ⚠️";
-        bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
-        bossBanner.classList.add("show");
-        bossApproachSound();
-      }
-      if(!minibossSpawned && elapsed>=minibossSpawnAt){
-        minibossSpawned=true;
-        spawnBoss(true);
-        beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
-        beep({noise:true,dur:0.05,gain:0.02});
-      }
-      if(!bossWarned && elapsed>=bossApproachAt){
-        bossWarned=true;
-        bossBanner.textContent="⚠️ BOSS APPROACHING! ⚠️";
-        bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
-        bossBanner.classList.add("show");
-        bossApproachSound();
-      }
-      if(!bossSpawned && elapsed>=bossSpawnAt){
-        bossSpawned=true;
-        spawnBoss(false);
-        beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
-        beep({noise:true,dur:0.05,gain:0.02});
+    // Endless: miniboss every 20s; every 3rd = boss. Warning ~2s before (always run when ENDLESS_RUN).
+    if(!practice && (ENDLESS_RUN || !TEST_SINGLE_MOB_MODE)){
+      if(ENDLESS_RUN){
+        const currentWave = Math.floor(elapsed / 20);
+        const nextWave = Math.max(1, lastSpawnedMinibossMinute + 1);
+        const isBossWave = nextWave > 0 && nextWave % 3 === 0;
+
+        if(elapsed >= nextWave * 20 - 2 && nextWave > lastWarningWave){
+          lastWarningWave = nextWave;
+          bossBanner.textContent = isBossWave ? "⚠️ BOSS INCOMING! ⚠️" : "⚠️ MINIBOSS INCOMING! ⚠️";
+          bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show");
+          bossApproachSound();
+        }
+        if(currentWave >= 1 && currentWave > lastSpawnedMinibossMinute){
+          lastSpawnedMinibossMinute = currentWave;
+          const spawnBossThisWave = (currentWave % 3 === 0);
+          if(spawnBossThisWave){
+            bossBanner.textContent = "⚠️ BOSS! ⚠️";
+            bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+            bossBanner.classList.add("show");
+            spawnBoss(false, currentWave);
+            beep({freq:120,dur:0.22,type:"sawtooth",gain:0.07,slide:0.6});
+            beep({noise:true,dur:0.06,gain:0.025});
+          } else {
+            bossBanner.textContent = "⚠️ MINIBOSS! ⚠️";
+            bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+            bossBanner.classList.add("show");
+            spawnBoss(true, currentWave);
+            beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
+            beep({noise:true,dur:0.05,gain:0.02});
+          }
+        }
+
+        if(elapsed >= 148 && !lastMegaBossWarned){
+          lastMegaBossWarned = true;
+          bossBanner.textContent = "⚠️ MEGA BOSS INCOMING! ⚠️";
+          bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show");
+          bossApproachSound();
+        }
+        if(elapsed >= 150 && !lastSpawnedMegaBoss){
+          lastSpawnedMegaBoss = true;
+          bossBanner.textContent = "⚠️ MEGA BOSS! ⚠️";
+          bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show");
+          spawnMegaBoss();
+          beep({freq:100,dur:0.28,type:"sawtooth",gain:0.08,slide:0.5});
+          beep({noise:true,dur:0.08,gain:0.03});
+        }
+      } else {
+        const minibossApproachAt = roundSeconds * lvl.minibossPct * 0.9;
+        const minibossSpawnAt = roundSeconds * lvl.minibossPct;
+        const bossApproachAt = roundSeconds * lvl.bossPct - 8;
+        const bossSpawnAt = roundSeconds * lvl.bossPct;
+        if(!minibossWarned && elapsed>=minibossApproachAt){
+          minibossWarned=true;
+          bossBanner.textContent="⚠️ MINIBOSS! ⚠️";
+          bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show");
+          bossApproachSound();
+        }
+        if(!minibossSpawned && elapsed>=minibossSpawnAt){
+          minibossSpawned=true;
+          spawnBoss(true);
+          beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
+          beep({noise:true,dur:0.05,gain:0.02});
+        }
+        if(!bossWarned && elapsed>=bossApproachAt){
+          bossWarned=true;
+          bossBanner.textContent="⚠️ BOSS APPROACHING! ⚠️";
+          bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show");
+          bossApproachSound();
+        }
+        if(!bossSpawned && elapsed>=bossSpawnAt){
+          bossSpawned=true;
+          spawnBoss(false);
+          beep({freq:160,dur:0.18,type:"triangle",gain:0.06,slide:0.7});
+          beep({noise:true,dur:0.05,gain:0.02});
+        }
       }
     }
 
@@ -1810,20 +2023,26 @@
       victorySuckFanfare();
     }
 
-    // spawning: only before round end
-    if(!roundEnd){
-      if(!TEST_SINGLE_MOB_MODE){
-        threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
-        const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
-        const spawnsPerSec = baseRate * threat * 0.45;
-        spawnAcc += spawnsPerSec*dt;
+    // spawning: endless = 20% more mobs per 20s (rate × 1.2^wave); mobs get 1.2^wave HP/speed/dmg
+    if(ENDLESS_RUN || !roundEnd){
+      if(ENDLESS_RUN || !TEST_SINGLE_MOB_MODE){
+        if(ENDLESS_RUN){
+          const baseRate = 0.47;
+          const spawnsPerSec = baseRate * getWaveScale();
+          spawnAcc += Math.min(2, spawnsPerSec) * dt;
+        } else {
+          threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
+          const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
+          spawnAcc += baseRate * threat * 0.45 * dt;
+        }
         while(spawnAcc>=1){
           spawnAcc -= 1;
           const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
           spawnEnemy(Math.random()<eliteChance);
         }
       }
-    } else {
+    }
+    if(!ENDLESS_RUN && roundEnd){
       threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
     }
 
@@ -1874,8 +2093,15 @@
       player.vx=ix*speed;
       player.vy=iy*speed;
     }
-    player.x=clamp(player.x+player.vx*dt, 20*DPR, W-20*DPR);
-    player.y=clamp(player.y+player.vy*dt, 20*DPR, H-20*DPR);
+    const margin = 24 * DPR;
+    player.x=clamp(player.x+player.vx*dt, margin, mapW-margin);
+    player.y=clamp(player.y+player.vy*dt, margin, mapH-margin);
+    let out = pushOutOfFountain(player.x, player.y, player.r);
+    player.x = out.x; player.y = out.y;
+    out = pushOutOfManholes(player.x, player.y, player.r);
+    player.x = out.x; player.y = out.y;
+    out = pushOutOfMallProps(player.x, player.y, player.r);
+    player.x = out.x; player.y = out.y;
     const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
     if (plSpeed > 0.5*DPR) player.lastDir = (player.vy || 0) < 0 ? "back" : "front";
 
@@ -1892,6 +2118,12 @@
       if(aura>0 && (dx*dx+dy*dy)<auraR2) sp *= (1-aura);
       e.x += (dx/d)*sp*dt;
       e.y += (dy/d)*sp*dt;
+      let eOut = pushOutOfFountain(e.x, e.y, e.r);
+      e.x = eOut.x; e.y = eOut.y;
+      eOut = pushOutOfManholes(e.x, e.y, e.r);
+      e.x = eOut.x; e.y = eOut.y;
+      eOut = pushOutOfMallProps(e.x, e.y, e.r);
+      e.x = eOut.x; e.y = eOut.y;
       if(e.hitFlash>0) e.hitFlash-=dt;
 
       const rr=(player.r+e.r);
@@ -1917,7 +2149,7 @@
       const b=bullets[i];
       b.x += b.vx*dt; b.y += b.vy*dt;
       b.life -= dt;
-      if(b.life<=0 || b.x<-100 || b.x>W+100 || b.y<-100 || b.y>H+100){
+      if(b.life<=0 || b.x<-100 || b.x>mapW+100 || b.y<-100 || b.y>mapH+100){
         bullets.splice(i,1); continue;
       }
       for(let j=enemies.length-1;j>=0;j--){
@@ -1969,29 +2201,15 @@
       }
     }
 
-    // loot drops -> compare
+    if(lootPickupCooldown>0) lootPickupCooldown -= dt;
+
+    // loot drops -> compare (no magnet; pickup only by walking over)
     for(let i=lootDrops.length-1;i>=0;i--){
       const L=lootDrops[i];
       L.t += dt;
       const d2p=dist2(L.x,L.y,player.x,player.y);
-      if(suckActive){
-        const d=Math.sqrt(d2p)||1;
-        const sp=900*DPR;
-        L.x += ((player.x-L.x)/d)*sp*dt;
-        L.y += ((player.y-L.y)/d)*sp*dt;
-      } else {
-        const pr=(player.pickup+20)*DPR;
-        if(d2p < pr*pr){
-          const d=Math.sqrt(d2p)||1;
-          const pull=clamp(1-d/pr,0,1);
-          const sp=(120+pull*480)*DPR;
-          L.x += ((player.x-L.x)/d)*sp*dt;
-          L.y += ((player.y-L.y)/d)*sp*dt;
-        }
-      }
       const rr=player.r+L.r;
-      const d2pCheck=dist2(L.x,L.y,player.x,player.y);
-      if(d2pCheck < rr*rr){
+      if(d2p < rr*rr && lootPickupCooldown<=0){
         openCompare(L);
         break;
       }
@@ -2074,16 +2292,16 @@
     ctx.closePath();
   }
 
-  // Mall 1st floor placeholder floor: tiled mall-like pattern in world space
+  // Mall 1st floor: 4x map size, tiled pattern in world space
   function drawMallFloorPlaceholder(){
     const tile = 48 * DPR;
-    const w = Math.ceil(W / tile) + 2;
-    const h = Math.ceil(H / tile) + 2;
+    const w = Math.ceil(mapW / tile) + 1;
+    const h = Math.ceil(mapH / tile) + 1;
     ctx.save();
     ctx.fillStyle = "#3d362e";
-    ctx.fillRect(-tile, -tile, W + tile * 2, H + tile * 2);
-    for (let i = -1; i < w; i++) {
-      for (let j = -1; j < h; j++) {
+    ctx.fillRect(0, 0, mapW, mapH);
+    for (let i = 0; i < w; i++) {
+      for (let j = 0; j < h; j++) {
         ctx.fillStyle = (i + j) % 2 === 0 ? "#4a4439" : "#353028";
         ctx.fillRect(i * tile, j * tile, tile + 1, tile + 1);
       }
@@ -2091,18 +2309,186 @@
     ctx.globalAlpha = 0.12;
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.lineWidth = 1 * DPR;
-    for (let i = -1; i < w; i++) {
+    for (let i = 0; i <= w; i++) {
       ctx.beginPath();
-      ctx.moveTo(i * tile, -tile);
-      ctx.lineTo(i * tile, H + tile);
+      ctx.moveTo(i * tile, 0);
+      ctx.lineTo(i * tile, mapH);
       ctx.stroke();
     }
-    for (let j = -1; j < h; j++) {
+    for (let j = 0; j <= h; j++) {
       ctx.beginPath();
-      ctx.moveTo(-tile, j * tile);
-      ctx.lineTo(W + tile, j * tile);
+      ctx.moveTo(0, j * tile);
+      ctx.lineTo(mapW, j * tile);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  // Fountain collision: same radius as drawn pool (solid obstacle)
+  const FOUNTAIN_R = 80 * 1.4 * 1;  // *DPR applied when used
+  function getFountainCenter(){ return { cx: mapW / 2, cy: mapH / 2 }; }
+  function pushOutOfFountain(x, y, entityR){
+    const { cx, cy } = getFountainCenter();
+    const fr = FOUNTAIN_R * DPR;
+    const d = Math.hypot(x - cx, y - cy) || 1;
+    const minDist = fr + entityR;
+    if (d < minDist) {
+      const scale = minDist / d;
+      return { x: cx + (x - cx) * scale, y: cy + (y - cy) * scale };
+    }
+    return { x, y };
+  }
+
+  function pushOutOfCircle(x, y, entityR, cx, cy, cr){
+    const d = Math.hypot(x - cx, y - cy) || 1;
+    const minDist = cr + entityR;
+    if (d < minDist) {
+      const scale = minDist / d;
+      return { x: cx + (x - cx) * scale, y: cy + (y - cy) * scale };
+    }
+    return { x, y };
+  }
+  function pushOutOfManholes(x, y, entityR){
+    let px = x, py = y;
+    for (const m of manholes) {
+      const out = pushOutOfCircle(px, py, entityR, m.x, m.y, m.r);
+      px = out.x; py = out.y;
+    }
+    return { x: px, y: py };
+  }
+
+  function pushOutOfRect(px, py, entityR, rx, ry, rw, rh){
+    const cx = clamp(px, rx, rx + rw);
+    const cy = clamp(py, ry, ry + rh);
+    const d = Math.hypot(px - cx, py - cy) || 1;
+    const minDist = entityR + 2*DPR;
+    if (d < minDist) {
+      const scale = minDist / d;
+      return { x: cx + (px - cx) * scale, y: cy + (py - cy) * scale };
+    }
+    return { x: px, y: py };
+  }
+  function pushOutOfMallProps(x, y, entityR){
+    let px = x, py = y;
+    for (const p of mallProps) {
+      const out = pushOutOfRect(px, py, entityR, p.x, p.y, p.w, p.h);
+      px = out.x; py = out.y;
+    }
+    return { x: px, y: py };
+  }
+
+  function drawFountain(){
+    const cx = mapW / 2, cy = mapH / 2;
+    const baseR = 80 * DPR;
+    const poolR = baseR * 1.4;
+    ctx.save();
+    // Pool – solid (opaque)
+    ctx.fillStyle = "#2c4a5e";
+    ctx.strokeStyle = "#3d6b85";
+    ctx.lineWidth = 3 * DPR;
+    ctx.beginPath();
+    ctx.arc(cx, cy, poolR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Base ring
+    ctx.fillStyle = "#5a5248";
+    ctx.strokeStyle = "#8a7d6a";
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Center pillar
+    const pillarR = baseR * 0.35;
+    ctx.fillStyle = "#6b6358";
+    ctx.beginPath();
+    ctx.arc(cx, cy, pillarR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Water on top – solid
+    ctx.fillStyle = "#5b9bb5";
+    ctx.beginPath();
+    ctx.arc(cx, cy - 8 * DPR, pillarR * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    // Inner water – solid, slight shimmer tint
+    ctx.fillStyle = "#7ab8d4";
+    ctx.beginPath();
+    ctx.arc(cx, cy, poolR * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawMallProps(){
+    ctx.save();
+    for (const p of mallProps) {
+      ctx.fillStyle = p.fill;
+      ctx.strokeStyle = p.stroke;
+      ctx.lineWidth = 2 * DPR;
+      roundRect(p.x, p.y, p.w, p.h, 6 * DPR);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      roundRect(p.x + 4*DPR, p.y + 4*DPR, p.w - 8*DPR, p.h - 8*DPR, 4 * DPR);
+      ctx.fill();
+      ctx.font = `${Math.min(24, p.h * 0.5)}px ui-sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.fillText(p.sign, p.x + p.w/2, p.y + p.h/2);
+    }
+    ctx.restore();
+  }
+
+  function drawManholes(){
+    ctx.save();
+    for (const m of manholes) {
+      const r = m.r;
+      ctx.fillStyle = "#3a3632";
+      ctx.strokeStyle = "#5c5750";
+      ctx.lineWidth = 3 * DPR;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#2a2824";
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r * 0.88, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#4a4540";
+      ctx.lineWidth = 1.5 * DPR;
+      ctx.stroke();
+      ctx.fillStyle = "#1e1c1a";
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  const DOOR_W = 56 * DPR;
+  const DOOR_H = 90 * DPR;
+  const DOOR_INSET = 40 * DPR;
+  function drawDoors(){
+    ctx.save();
+    const d = DOOR_INSET;
+    const dw = DOOR_W, dh = DOOR_H;
+    const drawDoor = (x, y, vertical) => {
+      const w = vertical ? dh : dw;
+      const h = vertical ? dw : dh;
+      ctx.fillStyle = "#2a2520";
+      ctx.strokeStyle = "rgba(180,160,120,0.6)";
+      ctx.lineWidth = 2 * DPR;
+      roundRect(x - w/2, y - h/2, w, h, 6 * DPR);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.fillStyle = "rgba(120,100,80,0.5)";
+      roundRect(x - w/2 + 4*DPR, y - h/2 + 4*DPR, w - 8*DPR, h - 8*DPR, 4 * DPR);
+      ctx.fill();
+    };
+    drawDoor(mapW / 2, d, false);           // north
+    drawDoor(mapW / 2, mapH - d, false);   // south
+    drawDoor(d, mapH / 2, true);            // west
+    drawDoor(mapW - d, mapH / 2, true);     // east
     ctx.restore();
   }
 
@@ -2115,8 +2501,13 @@
     ctx.save();
     ctx.translate(camOffsetX, camOffsetY);
 
-    // For now use mall-like tiled floor for 1-1 (and other levels) so ground always scrolls.
-    drawMallFloorPlaceholder();
+    if (mapW > 0 && mapH > 0) {
+      drawMallFloorPlaceholder();
+      drawFountain();
+      drawManholes();
+      drawMallProps();
+      drawDoors();
+    }
 
     for(const L of lootDrops) drawLoot(L);
     for(const o of orbs) drawOrb(o);
@@ -2423,65 +2814,27 @@
   function drawLoot(L){
     const it=L.item;
     const c=RAR[it.rarity].color;
-    const bob=Math.sin((now()*0.002)+L.bob)*4*DPR;
+    const t=(L.t||0)+L.bob;
+    const sizePulse=1+0.075*Math.sin(t*4);
+    const baseR=L.r*1.5;
+    const r=baseR*sizePulse;
 
     ctx.save();
-    ctx.globalAlpha = it.rarity==="legendary" ? 0.45 : it.rarity==="rare" ? 0.38 : it.rarity==="uncommon" ? 0.32 : 0.26;
-    ctx.shadowColor=c;
-    ctx.shadowBlur=(it.rarity==="legendary"?58:44)*DPR;
-    ctx.strokeStyle=c;
-    ctx.lineWidth=(it.rarity==="legendary"?6:5)*DPR;
-    ctx.beginPath();
-    ctx.arc(L.x, L.y+16*DPR, (L.r*1.55) + (it.rarity==="legendary"?2*DPR:0), 0, Math.PI*2);
-    ctx.stroke();
-    ctx.restore();
+    ctx.translate(L.x, L.y+16*DPR);
 
-    ctx.save();
-    ctx.globalAlpha=0.16+(it.rarity==="legendary"?0.10:0);
-    ctx.shadowColor=c;
-    ctx.shadowBlur=30*DPR;
-    ctx.fillStyle=c;
-    ctx.beginPath();
-    ctx.ellipse(L.x, L.y+16*DPR, L.r*1.45, L.r*0.82, 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    ctx.translate(L.x, L.y+bob);
-
-    const grad=ctx.createRadialGradient(-L.r*0.35, -L.r*0.45, 2, 0, 0, L.r*2.0);
+    const grad=ctx.createRadialGradient(-r*0.35, -r*0.45, 2, 0, 0, r*2.0);
     grad.addColorStop(0, "rgba(255,255,255,0.26)");
     grad.addColorStop(0.28, `${c}66`);
     grad.addColorStop(1, "rgba(0,0,0,0.78)");
     ctx.fillStyle=grad;
-    ctx.strokeStyle=`${c}AA`;
-    ctx.lineWidth=2*DPR;
     ctx.beginPath();
-    ctx.arc(0,0,L.r,0,Math.PI*2);
+    ctx.arc(0,0,r,0,Math.PI*2);
     ctx.fill();
-    ctx.stroke();
 
-    ctx.font=`${20*DPR}px ui-sans-serif`;
+    ctx.font=`${(20*1.5)*DPR}px ui-sans-serif`;
     ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillStyle="rgba(255,255,255,0.96)";
     ctx.fillText(it.icon, 0, 1*DPR);
-
-    const n=it.affixes.length;
-    if(n>0){
-      ctx.save();
-      ctx.globalAlpha=0.92;
-      for(let i=0;i<n;i++){
-        const a=(i/n)*Math.PI*2 - Math.PI/2;
-        const r0=L.r+2*DPR, r1=L.r+9*DPR;
-        ctx.strokeStyle="rgba(255,255,255,0.86)";
-        ctx.lineWidth=2*DPR;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a)*r0, Math.sin(a)*r0);
-        ctx.lineTo(Math.cos(a)*r1, Math.sin(a)*r1);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
 
     ctx.restore();
   }
