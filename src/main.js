@@ -1977,7 +1977,6 @@
         mallProps.push({ type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
       }
     }
-    const fountainCx = mapW / 2, fountainCy = mapH / 2;
     const poolR = 80 * 1.4 * DPR;
     const spawnDist = poolR + player.r + 28 * DPR;
     const spawnAngle = Math.random() * Math.PI * 2;
