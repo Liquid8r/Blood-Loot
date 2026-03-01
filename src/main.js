@@ -1977,8 +1977,12 @@
         mallProps.push({ type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
       }
     }
-    player.x = mapW / 2;
-    player.y = mapH / 2;
+    const fountainCx = mapW / 2, fountainCy = mapH / 2;
+    const poolR = 80 * 1.4 * DPR;
+    const spawnDist = poolR + player.r + 28 * DPR;
+    const spawnAngle = Math.random() * Math.PI * 2;
+    player.x = fountainCx + Math.cos(spawnAngle) * spawnDist;
+    player.y = fountainCy + Math.sin(spawnAngle) * spawnDist;
     player.vx=0; player.vy=0;
     player.level=1; player.xp=0; player.xpNeed=BASE.xpNeed;
 
