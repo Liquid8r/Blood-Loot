@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.003.5";
+  const GAME_VERSION = "1.003.6";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -71,6 +71,7 @@
   }
 
   // ========= Audio =========
+  const SFX_LEVEL_MULTIPLIER = 2.2;
   let audioCtx=null;
   let musicVol = Math.min(1, Math.max(0, +(localStorage.getItem("affixloot_music_vol")||0.28)));
   let sfxVol = Math.min(1, Math.max(0, +(localStorage.getItem("affixloot_sfx_vol")||1)));
@@ -121,8 +122,8 @@
         localStorage.setItem("affixloot_music_vol", String(musicVol));
         if(musicPct) musicPct.textContent = Math.round(musicVol*100)+"%";
         applyMusicVolume();
-        if(menuMusic && musicVol>0) menuMusic.play().catch(()=>{});
-        if(runMusic && musicVol>0) runMusic.play().catch(()=>{});
+        if(menuMusic && musicVol>0 && !running) menuMusic.play().catch(()=>{});
+        if(runMusic && musicVol>0 && running) runMusic.play().catch(()=>{});
       };
     }
     if(sfxSl){
@@ -148,7 +149,7 @@
   function beep({freq=440, dur=0.06, type="sine", gain=0.06, slide=0, noise=false}={}){  // tiny synth
     if(sfxVol<=0) return;
     ensureAudio();
-    const gainMul = Math.max(0.0001, gain * sfxVol);
+    const gainMul = Math.max(0.0001, gain * sfxVol * SFX_LEVEL_MULTIPLIER);
     const t0 = audioCtx.currentTime;
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.0001, t0);
@@ -244,7 +245,7 @@
   // ========= Levels (1-1 = current board; beat to unlock 1-2, then 1-3) =========
   const LEVELS = [
     { id: "1-1", name: "1-1", roundSeconds: 150, spawnScale: 1,    enemyHpScale: 1,   bossHpScale: 1,   threatDivisor: 1800, minibossPct: 0.47, bossPct: 0.93 },
-    { id: "1-2", name: "1-2", roundSeconds: 165, spawnScale: 1.12, enemyHpScale: 1.18, bossHpScale: 1.18, threatDivisor: 1500, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "1-2", name: "1-2", roundSeconds: 155, spawnScale: 1.24, enemyHpScale: 1.34, bossHpScale: 1.30, threatDivisor: 1280, minibossPct: 0.44, bossPct: 0.88 },
     { id: "1-3", name: "1-3", roundSeconds: 180, spawnScale: 1.28, enemyHpScale: 1.4,  bossHpScale: 1.35, threatDivisor: 1200, minibossPct: 0.47, bossPct: 0.93 },
   ];
   function getLevelConfig(id){
@@ -262,6 +263,15 @@
     }
     if(["w","a","s","d","arrowup","arrowleft","arrowdown","arrowright"," "].includes(k) || e.key===" ") e.preventDefault();
     if((k==="p" || k==="escape") && running){ togglePause(); return; }
+    if(k==="x" && running && !paused && !inCompare && !victoryPhase && extractionCountdown==null && extractionLiftoff==null && player.hp>0){
+      if(!bossKilled){
+        showSimpleToast("Kill the boss first — Extraction available after boss.");
+        e.preventDefault();
+      } else {
+        extractionCountdown = EXTRACTION_COUNTDOWN_SEC;
+        e.preventDefault();
+      }
+    }
     keys.add(k===" " ? "space" : k);
   },{passive:false});
   addEventListener("keyup",(e)=>{
@@ -390,7 +400,7 @@
   let lootPickupCooldown=0;
 
   // Boss control (endless: mini-boss every minute, boss every 5 minutes)
-  let minibossWarned=false, minibossSpawned=false, bossWarned=false, bossSpawned=false;
+  let minibossWarned=false, minibossSpawned=false, bossWarned=false, bossSpawned=false, bossKilled=false;
   let lastSpawnedBossMinute = -1;
   let lastSpawnedMinibossMinute = -1;
   let lastWarningWave = 0;
@@ -399,6 +409,19 @@
   let roundEnd=false, victoryPhase=false;
   let victorySuckAt=0;   // when to start sucking loot/XP (now + 2s when last enemy dies)
   let suckActive=false;  // strong pull on orbs and loot toward player
+  let extractionCountdown=null;
+  let extractionLiftoff=null;
+  const EXTRACTION_COUNTDOWN_SEC = 10;
+  const EXTRACTION_IGNITION_DURATION = 0.55;
+  const EXTRACTION_LIFTOFF_DURATION = 2.45;
+  let extractionRocketParticles=[];
+  let extractionTransition=null;
+  let extractionSummaryData=null;
+  let extractionFlameRing=null;
+  let deathSequence=null;
+  let tokensAtRunStart=0;
+  let runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
+  let runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
 
   // High score
   let hiBestTime = +localStorage.getItem("affixloot_best_time") || 0;
@@ -456,6 +479,9 @@
     playerSprites.frontIdle = load(enc("Front_Idle.png"));
     playerSprites.backIdle = load(enc("Back_Idle.png"));
   })();
+
+  const extractionCharImg = new Image();
+  extractionCharImg.src = "assets/sprites/Main_Character/Character_extraction.png";
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -785,6 +811,68 @@
     toast.prepend(div);
     setTimeout(()=>div.remove(), 2800);
   }
+  function showComingSoonPopup(){
+    const overlay = document.getElementById("overlay");
+    const wrap = document.createElement("div");
+    wrap.className = "comingSoonPopup";
+    wrap.innerHTML = `
+      <div class="comingSoonPopupCard">
+        <h3>Coming Soon</h3>
+        <button type="button" class="comingSoonBtn">OK</button>
+      </div>
+    `;
+    wrap.querySelector(".comingSoonBtn").onclick = () => wrap.remove();
+    wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
+    overlay.appendChild(wrap);
+  }
+  function showSimpleToast(message){
+    const div=document.createElement("div");
+    div.className="toastItem";
+    div.innerHTML=`
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-weight:950; color:rgba(234,242,255,.9);">${String(message)}</span>
+      </div>
+    `;
+    toast.prepend(div);
+    setTimeout(()=>div.remove(), 2500);
+  }
+  function showExtractionSummary(data){
+    if(!data) return;
+    const overlay = document.getElementById("overlay");
+    const bloodOrder = ["common","uncommon","rare","legendary"];
+    const bloodRows = bloodOrder.filter(t=>(data.bloodMlByType[t]||0)>0).map(t=>{
+      const label = RAR[t]?.name || t;
+      const color = RAR[t]?.color || "rgba(255,255,255,.8)";
+      return `<div class="extractionSummaryRow" style="border-left-color:${color}"><span>${label}</span><span class="mono">${data.bloodMlByType[t]} ml</span></div>`;
+    }).join("");
+    const lootRows = bloodOrder.filter(t=>(data.lootByRarity[t]||0)>0).map(t=>{
+      const label = RAR[t]?.name || t;
+      const color = RAR[t]?.color || "rgba(255,255,255,.8)";
+      return `<div class="extractionSummaryRow" style="border-left-color:${color}"><span>${label}</span><span class="mono">×${data.lootByRarity[t]}</span></div>`;
+    }).join("");
+    const wrap = document.createElement("div");
+    wrap.className = "extractionSummaryOverlay";
+    wrap.innerHTML = `
+      <div class="extractionSummaryCard">
+        <h2 class="extractionSummaryTitle">Run summary</h2>
+        <div class="extractionSummarySection">
+          <div class="extractionSummarySectionTitle">Tokens earned</div>
+          <div class="extractionSummaryBig">${data.tokensEarned||0}</div>
+        </div>
+        <div class="extractionSummarySection">
+          <div class="extractionSummarySectionTitle">Loot (by rarity)</div>
+          <div class="extractionSummaryRows">${lootRows || "<div class=\"extractionSummaryRow\"><span>—</span><span>None</span></div>"}</div>
+        </div>
+        <div class="extractionSummarySection">
+          <div class="extractionSummarySectionTitle">Blood (ml, by type)</div>
+          <div class="extractionSummaryRows">${bloodRows || "<div class=\"extractionSummaryRow\"><span>—</span><span>None</span></div>"}</div>
+        </div>
+        <button type="button" class="extractionSummaryBack">Back</button>
+      </div>
+    `;
+    wrap.querySelector(".extractionSummaryBack").onclick = () => wrap.remove();
+    overlay.appendChild(wrap);
+  }
   function showToast(it, textOverride=null){
     const c = RAR[it.rarity]?.color || "rgba(255,255,255,.6)";
     const div=document.createElement("div");
@@ -1010,6 +1098,7 @@
       const it=pendingLoot.newItem;
       equipped[pendingLoot.slotKey]=it;
       lootCount++;
+      runLootByRarity[it.rarity]=(runLootByRarity[it.rarity]||0)+1;
       recomputeBuild();
       renderEquipMini();
       showToast(it);
@@ -1314,7 +1403,25 @@
       player.invuln=0.18;
       beep({freq: 120, dur:0.08, type:"sawtooth", gain:0.05, slide:1.4});
     }
-    if(player.hp<=0){ player.hp=0; gameOver(); }
+    if(player.hp<=0){
+      player.hp=0;
+      const dx = player.x, dy = player.y;
+      deathSequence = { t: 0, duration: 2.8, px: dx, py: dy };
+      if(runMusic){ runMusic.pause(); runMusic.currentTime=0; runMusic=null; }
+      for(let n=0;n<24;n++){
+        const a = Math.random()*Math.PI*2;
+        const sp = rand(80,220)*DPR;
+        particles.push({
+          x: dx + rand(-16,16)*DPR, y: dy + rand(-16,16)*DPR,
+          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(20,80)*DPR,
+          r: rand(3,8)*DPR, life: rand(0.5,1.1), t: 0,
+          col: pick(["#8b0000","#660000","#4a0000","#2d0000","#1a0000","#550000"])
+        });
+      }
+      beep({freq:70,dur:0.2,type:"sawtooth",gain:0.08,slide:0.4});
+      beep({noise:true,dur:0.15,gain:0.05});
+      return;
+    }
   }
 
   function killEnemy(e){
@@ -1326,6 +1433,8 @@
     dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
 
     if(e.boss){
+      bossKilled=true;
+      showSimpleToast("Extraction available — press X to leave.");
       spawnLegendaryBurst(e.x,e.y,true);
       beep({freq: 180, dur:0.18, type:"sawtooth", gain:0.06, slide:0.55});
       beep({freq: 420, dur:0.14, type:"triangle", gain:0.05, slide:0.75});
@@ -1450,32 +1559,86 @@
     ovTitle.textContent="";
     ovSub.textContent="";
 
+    const hubImgBase = "assets/graphics/";
+    const hubDefaultPod = hubImgBase + "pod.png";
+    const hubDefaultHighlight = hubImgBase + "pod_high_light.png";
+    const hubHoverMap = {
+      contracts:     { pod: "pod_contracts.png",     highlight: "pod_high_light_contracts.png" },
+      chem:          { pod: "pod_chemistry_lab.png", highlight: "pod_high_light_chemistry_lab.png" },
+      armory:        { pod: "pod_armory.png",        highlight: "pod_high_light_armory.png" },
+      intel:         { pod: "pod_intel.png",         highlight: "pod_high_light_intel.png" },
+      core:          { pod: "pod_core_systems.png",  highlight: "pod_high_light_core_systems.png" },
+      options:       { pod: "pod_options.png",       highlight: "pod_high_light_options.png" },
+      drop:          { pod: "pod_drop-zone.png",     highlight: "pod_high_light_drop_zone.png" }
+    };
+
+    const hubW = 1536, hubH = 1024;
+    const pt = (x, y) => x + "," + y;
+    const hubZonePoints = {
+      contracts: [pt(80,335), pt(303,347), pt(319,567), pt(78,577)].join(" "),
+      chem:       [pt(314,296), pt(532,290), pt(526,635), pt(319,631)].join(" "),
+      armory:     [pt(623,277), pt(885,277), pt(885,639), pt(623,639)].join(" "),
+      intel:      [pt(964,289), pt(1182,293), pt(1188,634), pt(963,638)].join(" "),
+      core:       [pt(1215,315), pt(1487,289), pt(1488,495), pt(1215,500)].join(" "),
+      options:    [pt(1222,586), pt(1335,593), pt(1306,696), pt(1193,685)].join(" "),
+      drop:       [pt(550,728), pt(953,728), pt(1048,882), pt(470,882)].join(" ")
+    };
+
     ovBody.innerHTML=`
-      <div class="menuMainWrap">
-        <img class="menuMainBg" src="assets/graphics/Main Menu.png" alt="" />
-        <div class="menuMainGrid">
-          <button type="button" class="menuBox menuBoxPrimary" id="btnStartLooting">Start Looting!</button>
-          <button type="button" class="menuBox menuBoxPlaceholder" id="btnUpgrades">Upgrades</button>
-          <button type="button" class="menuBox menuBoxPlaceholder" id="btnChooseLevel">Choose Level</button>
-          <div class="menuBox menuBoxVolume" id="volumeBox">
-            ${getVolumeControlsHTML()}
-          </div>
+      <div class="menuHubWrap">
+        <div class="menuHubBgWrap">
+          <img class="menuHubBg" id="menuHubBgImg" src="${hubDefaultPod}" alt="" />
+          <img class="menuHubBgHighlight" id="menuHubBgHighlightImg" src="${hubDefaultHighlight}" alt="" />
+        </div>
+        <svg class="menuHubZones" viewBox="0 0 ${hubW} ${hubH}" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+          <polygon class="menuHubZone" data-hub-area="contracts" points="${hubZonePoints.contracts}" />
+          <polygon class="menuHubZone" data-hub-area="chem" points="${hubZonePoints.chem}" />
+          <polygon class="menuHubZone" data-hub-area="armory" points="${hubZonePoints.armory}" />
+          <polygon class="menuHubZone" data-hub-area="intel" points="${hubZonePoints.intel}" />
+          <polygon class="menuHubZone" data-hub-area="core" points="${hubZonePoints.core}" />
+          <polygon class="menuHubZone" data-hub-area="options" points="${hubZonePoints.options}" />
+          <polygon class="menuHubZone" data-hub-area="drop" points="${hubZonePoints.drop}" />
+        </svg>
+        <div class="menuHubVolume" id="volumeBox">
+          ${getVolumeControlsHTML()}
         </div>
       </div>
     `;
+
+    const bgImg = document.getElementById("menuHubBgImg");
+    const bgHighlight = document.getElementById("menuHubBgHighlightImg");
+    const clickHandlers = {
+      contracts: () => showComingSoonPopup(),
+      chem: () => showComingSoonPopup(),
+      armory: () => showComingSoonPopup(),
+      intel: () => showComingSoonPopup(),
+      core: () => showSimpleToast("Core Systems — coming soon"),
+      options: () => showComingSoonPopup(),
+      drop: () => { ensureAudio(); showChooseLevelMenu(); }
+    };
+
+    ovBody.querySelectorAll(".menuHubZone[data-hub-area]").forEach(poly => {
+      const area = poly.getAttribute("data-hub-area");
+      const variant = hubHoverMap[area];
+      if (variant) {
+        poly.addEventListener("mouseenter", () => {
+          beep({ freq: 640, dur: 0.05, type: "sine", gain: 0.055 });
+          bgImg.src = hubImgBase + variant.pod;
+          bgHighlight.src = hubImgBase + variant.highlight;
+        });
+        poly.addEventListener("mouseleave", () => {
+          bgImg.src = hubDefaultPod;
+          bgHighlight.src = hubDefaultHighlight;
+        });
+      }
+      const fn = clickHandlers[area];
+      if (fn) poly.addEventListener("click", fn);
+    });
 
     if(menuMusic && musicVol>0){
       applyMusicVolume();
       menuMusic.play().catch(()=>{});
     }
-
-    document.getElementById("btnStartLooting").onclick=()=>{
-      ensureAudio();
-      stopMenuMusic();
-      startGame(false);
-    };
-    document.getElementById("btnUpgrades").onclick=()=>showUpgradesMenu();
-    document.getElementById("btnChooseLevel").onclick=()=>showChooseLevelMenu();
     attachVolumeListeners(ovBody);
   }
 
@@ -1576,13 +1739,25 @@
       wrap.appendChild(row);
     }
     ovBody.appendChild(wrap);
-    const backWrap = document.createElement("div");
-    backWrap.className = "upgradeBackWrap";
+    const btnWrap = document.createElement("div");
+    btnWrap.className = "upgradeBackWrap";
+    btnWrap.style.display = "flex";
+    btnWrap.style.gap = "10px";
+    btnWrap.style.flexWrap = "wrap";
+    const startBtn = document.createElement("button");
+    startBtn.className = "menuBtnPrimary";
+    startBtn.textContent = "Start Looting!";
+    startBtn.onclick = () => {
+      ensureAudio();
+      stopMenuMusic();
+      startGame(false);
+    };
     const backBtn = document.createElement("button");
     backBtn.textContent = "Back";
     backBtn.onclick = () => showMainMenu();
-    backWrap.appendChild(backBtn);
-    ovBody.appendChild(backWrap);
+    btnWrap.appendChild(startBtn);
+    btnWrap.appendChild(backBtn);
+    ovBody.appendChild(btnWrap);
   }
 
   function showHighScore(){
@@ -1702,7 +1877,7 @@
     const oc = document.getElementById("overlayCard");
     if(oc) oc.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
-    ovTitle.textContent="Game Over";
+    ovTitle.textContent="You died";
     ovSub.innerHTML = `Time: <b>${formatTime(elapsed)}</b> • Kills: <b>${kills}</b> • Loot: <b>${lootCount}</b> • Level: <b>${player.level}</b>`;
 
     ovBtns.innerHTML="";
@@ -1717,10 +1892,9 @@
 
     ovBody.innerHTML=`
       <div class="compareCard">
-        <div style="font-weight:1000; letter-spacing:.25px;">Build Tip</div>
-        <div style="margin-top:8px; color:rgba(234,242,255,.75); font-size:13px; line-height:1.55;">
-          Attack speed is slightly reduced — you <b>need</b> to find 💨 affixes (attack speed) and better weapons.
-          Boss mid-run has higher loot chance.
+        <div style="font-weight:1000; letter-spacing:.25px;">All items and loot is lost</div>
+        <div style="margin-top:10px; color:rgba(234,242,255,.78); font-size:12px; line-height:1.6;">
+          Items stored in the Armory can be re-equipped after respawn in the pod.
         </div>
       </div>
     `;
@@ -1730,12 +1904,12 @@
   }
 
   // ========= Reset / Start =========
-  function resetState(){
+  function resetState(keepEquipped){
     enemies=[]; bullets=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
     kills=0; lootCount=0; streak=0; streakT=0;
     threat=1.0; spawnAcc=0; atkCD=0;
     lootPickupCooldown=0;
-    minibossWarned=false; minibossSpawned=false; bossWarned=false; bossSpawned=false;
+    minibossWarned=false; minibossSpawned=false; bossWarned=false; bossSpawned=false; bossKilled=false;
     lastSpawnedBossMinute = -1;
     lastSpawnedMinibossMinute = -1;
     lastWarningWave = 0;
@@ -1743,6 +1917,14 @@
     lastMegaBossWarned = false;
     roundEnd=false; victoryPhase=false;
     victorySuckAt=0; suckActive=false;
+    extractionCountdown=null;
+    extractionLiftoff=null;
+    extractionRocketParticles=[];
+    extractionFlameRing=null;
+    extractionTransition=null;
+    deathSequence=null;
+    runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
+    runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
 
     runTotalXp = 0;
     tokenBarProgress = 0;
@@ -1811,7 +1993,9 @@
     player.dashPending=false;
     player.lastDir="front";
 
-    equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
+    if(!keepEquipped){
+      equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
+    }
     player.levelBonuses={};
     recomputeBuild();
     player.shield=player.maxShield;
@@ -1828,14 +2012,8 @@
     currentLevelConfig = getLevelConfig(selectedLevelId);
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
-    resetState();
-
-    // starter kit: nothing equipped so first loot of each type is always an upgrade
-    equipped.weapon = null;
-    equipped.armor = null;
-    equipped.ring1 = null;
-    equipped.ring2 = null;
-    equipped.jewel = null;
+    resetState(true);
+    tokensAtRunStart = tokens;
     recomputeBuild();
     renderEquipMini();
 
@@ -1920,6 +2098,130 @@
     const elapsed = gameTime;
     const lvl = currentLevelConfig || getLevelConfig("1-1");
     const roundSeconds = lvl.roundSeconds;
+
+    // Extraction countdown: when X pressed, count down; at 0 and alive → liftoff
+    if(extractionCountdown!=null){
+      extractionCountdown -= dt;
+      if(extractionCountdown<=0){
+        extractionCountdown=null;
+        if(player.hp>0){
+          extractionLiftoff = { t: 0, duration: EXTRACTION_LIFTOFF_DURATION, ignitionDuration: EXTRACTION_IGNITION_DURATION, rocketSounded: false };
+          extractionFlameRing = { t: 0, duration: 0.7, maxR: 550*DPR };
+          spawnLevelUpRing(player.x, player.y);
+          for(let n=0;n<28;n++){
+            extractionRocketParticles.push({
+              x: player.x + rand(-20,20)*DPR, y: player.y,
+              vx: rand(-40,40)*DPR, vy: rand(80,220)*DPR,
+              r: rand(8,22)*DPR, life: rand(0.3,0.7), t: 0,
+              col: pick(["#ff6600","#ff8800","#ffaa00","#ff2200"])
+            });
+          }
+          beep({freq:55,dur:0.25,type:"sawtooth",gain:0.08,slide:0.3});
+          beep({freq:75,dur:0.18,type:"sawtooth",gain:0.05,slide:0.5});
+          beep({noise:true,dur:0.12,gain:0.04});
+        }
+      }
+    }
+    if(player.hp<=0) extractionCountdown=null;
+
+    // Extraction liftoff: flame ring spreads and kills mobs (loot stays), then scale animation
+    if(extractionLiftoff){
+      extractionLiftoff.t += dt;
+      if(extractionFlameRing){
+        extractionFlameRing.t += dt;
+        const ringR = Math.min(extractionFlameRing.maxR, (extractionFlameRing.t / extractionFlameRing.duration) * extractionFlameRing.maxR);
+        for(let i=enemies.length-1;i>=0;i--){
+          const e=enemies[i];
+          if(dist2(player.x,player.y,e.x,e.y) <= ringR*ringR) killEnemy(e);
+        }
+        if(extractionFlameRing.t >= extractionFlameRing.duration) extractionFlameRing=null;
+      }
+      if(!extractionLiftoff.rocketSounded && extractionLiftoff.t >= extractionLiftoff.ignitionDuration){
+        extractionLiftoff.rocketSounded = true;
+        beep({freq:65,dur:0.35,type:"sawtooth",gain:0.07,slide:0.2});
+        beep({freq:45,dur:0.28,type:"sawtooth",gain:0.05,slide:0.15});
+        beep({noise:true,dur:0.2,gain:0.035});
+      }
+      for(let i=levelUpRings.length-1;i>=0;i--){
+        const r=levelUpRings[i];
+        r.t+=dt;
+        r.r=r.maxR*Math.min(1,r.t/r.life);
+        if(r.t>=r.life) levelUpRings.splice(i,1);
+      }
+      for(let i=extractionRocketParticles.length-1;i>=0;i--){
+        const p=extractionRocketParticles[i];
+        p.t+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.98; p.vy*=1.02;
+        if(p.t>=p.life) extractionRocketParticles.splice(i,1);
+      }
+      if(extractionLiftoff.t >= extractionLiftoff.duration){
+        extractionSummaryData = {
+          tokensEarned: Math.max(0, tokens - tokensAtRunStart),
+          lootByRarity: { ...runLootByRarity },
+          bloodMlByType: { ...runBloodMlByType }
+        };
+        extractionTransition = { t: 0, duration: 1.2 };
+        extractionLiftoff=null;
+        extractionRocketParticles=[];
+      }
+      updateHUD(elapsed);
+      return;
+    }
+
+    if(extractionTransition){
+      extractionTransition.t += dt;
+      if(extractionTransition.t >= extractionTransition.duration){
+        const savedSummary = extractionSummaryData;
+        extractionTransition = null;
+        extractionSummaryData = null;
+        running = false;
+        if(runMusic){ runMusic.pause(); runMusic.currentTime=0; runMusic=null; }
+        applyMusicVolume();
+        resetState(true);
+        showMainMenu();
+        if(menuMusic && musicVol>0) menuMusic.play().catch(()=>{});
+        showExtractionSummary(savedSummary);
+      }
+      updateHUD(elapsed);
+      return;
+    }
+
+    if(deathSequence){
+      deathSequence.t += dt;
+      const dx = deathSequence.px, dy = deathSequence.py;
+      const feedSpeed = 45*DPR;
+      for(const e of enemies){
+        const ex= e.x, ey= e.y;
+        const d = Math.hypot(dx-ex, dy-ey)||1;
+        if(d > e.r + player.r*1.2){
+          e.x += ((dx-ex)/d)*feedSpeed*dt;
+          e.y += ((dy-ey)/d)*feedSpeed*dt;
+        }
+        if(e.hitFlash>0) e.hitFlash-=dt;
+      }
+      if(Math.random() < 0.42){
+        const a = Math.random()*Math.PI*2;
+        const sp = rand(40,140)*DPR;
+        particles.push({
+          x: dx + rand(-12,12)*DPR, y: dy + rand(-12,12)*DPR,
+          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(0,30)*DPR,
+          r: rand(2,6)*DPR, life: rand(0.4,0.9), t: 0,
+          col: pick(["#8b0000","#660000","#4a0000","#2d0000","#1a0000"])
+        });
+      }
+      for(let i=particles.length-1;i>=0;i--){
+        const p=particles[i];
+        p.t+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
+        p.vx*=(1-2.8*dt); p.vy*=(1-2.8*dt); p.vy+=20*DPR*dt;
+        if(p.t>p.life) particles.splice(i,1);
+      }
+      if(deathSequence.t >= deathSequence.duration){
+        equipped = { weapon: null, armor: null, ring1: null, ring2: null, jewel: null };
+        deathSequence = null;
+        gameOver();
+      }
+      updateHUD(elapsed);
+      return;
+    }
 
     // round end: no more spawns (disabled in endless)
     if(!practice && !ENDLESS_RUN && elapsed>=roundSeconds && !roundEnd){
@@ -2196,7 +2498,9 @@
       const d2pCheck=dist2(o.x,o.y,player.x,player.y);
       if(d2pCheck < rr*rr){
         orbs.splice(i,1);
-        gainXP(o.r>5*DPR?6:3);
+        const xpAmt = o.r>5*DPR?6:3;
+        gainXP(xpAmt);
+        runBloodMlByType.common = (runBloodMlByType.common||0) + (o.r>5*DPR?3:1);
         beep({freq:880,dur:0.02,type:"sine",gain:0.02,slide:0.92});
       }
     }
@@ -2495,31 +2799,121 @@
   function render(){
     ctx.clearRect(0,0,W,H);
 
-    // Camera: keep player visually centered, move world (including floor) relative to player.
-    const camOffsetX = W*0.5 - player.x;
-    const camOffsetY = H*0.5 - player.y;
-    ctx.save();
-    ctx.translate(camOffsetX, camOffsetY);
-
-    if (mapW > 0 && mapH > 0) {
-      drawMallFloorPlaceholder();
-      drawFountain();
-      drawManholes();
-      drawMallProps();
-      drawDoors();
+    if(extractionTransition){
+      ctx.fillStyle = "rgb(0,0,0)";
+      ctx.fillRect(0, 0, W, H);
+      return;
     }
 
-    for(const L of lootDrops) drawLoot(L);
-    for(const o of orbs) drawOrb(o);
-    for(const b of bullets) drawBullet(b);
-    for(const e of enemies) drawEnemy(e);
-    for(const p of particles) drawParticle(p);
-    for(const ring of levelUpRings) drawLevelUpRing(ring);
+    const camOffsetX = W*0.5 - player.x;
+    const camOffsetY = H*0.5 - player.y;
 
-    drawPlayer();
-    for(const pop of tokenPops) drawTokenPop(pop);
+    if(extractionLiftoff){
+      const ign = extractionLiftoff.ignitionDuration || 0;
+      const liftDur = extractionLiftoff.duration - ign;
+      const liftProgress = extractionLiftoff.t <= ign ? 0 : Math.min(1, (extractionLiftoff.t - ign) / liftDur);
+      const progress = extractionLiftoff.t <= ign ? (extractionLiftoff.t / ign) * 0.06 : 0.06 + (1 - 0.06) * liftProgress;
+      const worldScale = 1 / (1 + progress * 2.2);
+      const playerScale = 1 + progress * 2.2;
+      ctx.save();
+      ctx.translate(camOffsetX, camOffsetY);
+      ctx.translate(player.x, player.y);
+      ctx.scale(worldScale, worldScale);
+      ctx.translate(-player.x, -player.y);
+      if (mapW > 0 && mapH > 0) {
+        drawMallFloorPlaceholder();
+        drawFountain();
+        drawManholes();
+        drawMallProps();
+        drawDoors();
+      }
+      for(const L of lootDrops) drawLoot(L);
+      for(const o of orbs) drawOrb(o);
+      for(const b of bullets) drawBullet(b);
+      for(const e of enemies) drawEnemy(e);
+      for(const p of particles) drawParticle(p);
+      if(extractionFlameRing){
+        const ringR = Math.min(extractionFlameRing.maxR, (extractionFlameRing.t / extractionFlameRing.duration) * extractionFlameRing.maxR);
+        const ringW = 56*DPR;
+        ctx.save();
+        const cx = player.x, cy = player.y;
+        const grad = ctx.createRadialGradient(cx, cy, Math.max(0, ringR - ringW), cx, cy, ringR + ringW);
+        grad.addColorStop(0, "rgba(255,60,10,0.15)");
+        grad.addColorStop(0.4, "rgba(255,140,40,0.5)");
+        grad.addColorStop(0.6, "rgba(255,200,80,0.4)");
+        grad.addColorStop(0.85, "rgba(255,100,20,0.2)");
+        grad.addColorStop(1, "rgba(40,10,0,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR + ringW, 0, Math.PI*2);
+        ctx.arc(cx, cy, Math.max(0, ringR - ringW), 0, Math.PI*2, true);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,160,50,0.85)";
+        ctx.lineWidth = ringW * 0.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255,220,120,0.5)";
+        ctx.lineWidth = ringW * 0.2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI*2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      for(const ring of levelUpRings) drawLevelUpRing(ring);
+      for(const p of extractionRocketParticles){
+        const t=p.t/p.life;
+        ctx.save();
+        ctx.globalAlpha = 1 - t;
+        ctx.fillStyle = p.col;
+        ctx.shadowColor = p.col;
+        ctx.shadowBlur = 12*DPR;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r*(1+t), 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.translate(W*0.5, H*0.5);
+      ctx.scale(playerScale, playerScale);
+      ctx.translate(-W*0.5, -H*0.5);
+      ctx.translate(W*0.5 - player.x, H*0.5 - player.y);
+      drawPlayer();
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.translate(camOffsetX, camOffsetY);
+      if (mapW > 0 && mapH > 0) {
+        drawMallFloorPlaceholder();
+        drawFountain();
+        drawManholes();
+        drawMallProps();
+        drawDoors();
+      }
+      for(const L of lootDrops) drawLoot(L);
+      for(const o of orbs) drawOrb(o);
+      for(const b of bullets) drawBullet(b);
+      for(const e of enemies) drawEnemy(e);
+      for(const p of particles) drawParticle(p);
+      for(const ring of levelUpRings) drawLevelUpRing(ring);
+      if(deathSequence) drawCorpse(); else drawPlayer();
+      for(const pop of tokenPops) drawTokenPop(pop);
+      ctx.restore();
+    }
 
-    ctx.restore();
+    if(extractionCountdown!=null && extractionCountdown>0){
+      const sec = Math.ceil(extractionCountdown);
+      ctx.save();
+      ctx.font = `bold ${Math.min(72, W/8)*DPR}px ui-sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,200,80,0.95)";
+      ctx.shadowColor = "rgba(255,180,50,0.9)";
+      ctx.shadowBlur = 20*DPR;
+      ctx.fillText("Extraction: " + sec, W/2, H*0.22);
+      ctx.restore();
+    }
 
     if(victoryPhase){
       ctx.save();
@@ -2578,8 +2972,41 @@
     ovBody.innerHTML="";
   }
 
+  function drawCorpse(){
+    const x = player.x, y = player.y, r = player.r;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + 10*DPR, r*1.2, r*0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    const bodyGrad = ctx.createRadialGradient(x - r*0.3, y - r*0.2, 0, x, y, r*1.5);
+    bodyGrad.addColorStop(0, "rgba(80,20,15,0.95)");
+    bodyGrad.addColorStop(0.5, "rgba(50,10,8,0.9)");
+    bodyGrad.addColorStop(1, "rgba(25,5,5,0.85)");
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r*1.1, r*0.85, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(40,10,8,0.8)";
+    ctx.lineWidth = 2*DPR;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawPlayer(){
     const t=now()*0.001;
+
+    if(extractionLiftoff && extractionCharImg && extractionCharImg.complete && extractionCharImg.naturalWidth>0){
+      const size = player.r * 16;
+      const w = size, h = size;
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.drawImage(extractionCharImg, player.x - w/2, player.y - h/2, w, h);
+      ctx.restore();
+      return;
+    }
 
     function drawPlayerFallback(){
       ctx.save();
