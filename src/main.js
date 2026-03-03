@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.003.6";
+  const GAME_VERSION = "1.003.7";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -252,6 +252,81 @@
     return LEVELS.find(l=>l.id===id) || LEVELS[0];
   }
 
+  const SKILL_TREE_MAX_LEVEL = 3;
+  const SKILL_TREES = [
+    {
+      id: "warrior",
+      name: "WARRIOR",
+      branched: true,
+      nodes: [
+        { id: "war_base", name: "Base Dmg", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, branch: "base", branchIndex: 0 },
+        { id: "war_crit_chance", name: "Crit Chance", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_base"], branch: "left", branchIndex: 0 },
+        { id: "war_crit_dmg", name: "Crit Dmg", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_crit_chance"], branch: "left", branchIndex: 1 },
+        { id: "war_stun_chance", name: "Stun Chance", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_crit_dmg"], branch: "left", branchIndex: 2 },
+        { id: "war_stun_duration", name: "Stun Duration", cost: 3, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_stun_chance"], branch: "left", branchIndex: 3 },
+        { id: "war_rate", name: "Rate of Fire", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_base"], branch: "right", branchIndex: 0 },
+        { id: "war_pierce_chance", name: "Pierce Chance", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_rate"], branch: "right", branchIndex: 1 },
+        { id: "war_pierce_dmg", name: "Pierce Dmg", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_pierce_chance"], branch: "right", branchIndex: 2 },
+        { id: "war_splash", name: "Splash", cost: 3, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_pierce_dmg"], branch: "right", branchIndex: 3 },
+        { id: "war_obliterate", name: "Obliterate", cost: 5, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["war_stun_duration", "war_splash"], branch: "top", branchIndex: 0 }
+      ]
+    },
+    {
+      id: "survivalist",
+      name: "SURVIVOR",
+      branched: true,
+      nodes: [
+        { id: "surv_base", name: "", cost: 0, maxLevel: 1, branch: "base", branchIndex: 0 },
+        { id: "surv_left_0", name: "", cost: 0, maxLevel: 1, requires: ["surv_base"], branch: "left", branchIndex: 0 },
+        { id: "surv_left_1", name: "", cost: 0, maxLevel: 1, requires: ["surv_left_0"], branch: "left", branchIndex: 1 },
+        { id: "surv_left_2", name: "", cost: 0, maxLevel: 1, requires: ["surv_left_1"], branch: "left", branchIndex: 2 },
+        { id: "surv_left_3", name: "", cost: 0, maxLevel: 1, requires: ["surv_left_2"], branch: "left", branchIndex: 3 },
+        { id: "surv_right_0", name: "", cost: 0, maxLevel: 1, requires: ["surv_base"], branch: "right", branchIndex: 0 },
+        { id: "surv_right_1", name: "", cost: 0, maxLevel: 1, requires: ["surv_right_0"], branch: "right", branchIndex: 1 },
+        { id: "surv_right_2", name: "", cost: 0, maxLevel: 1, requires: ["surv_right_1"], branch: "right", branchIndex: 2 },
+        { id: "surv_right_3", name: "", cost: 0, maxLevel: 1, requires: ["surv_right_2"], branch: "right", branchIndex: 3 },
+        { id: "surv_top", name: "", cost: 0, maxLevel: 1, requires: ["surv_left_3", "surv_right_3"], branch: "top", branchIndex: 0 }
+      ]
+    },
+    {
+      id: "scientist",
+      name: "SCIENTIST",
+      branched: true,
+      nodes: [
+        { id: "sci_base", name: "", cost: 0, maxLevel: 1, branch: "base", branchIndex: 0 },
+        { id: "sci_left_0", name: "", cost: 0, maxLevel: 1, requires: ["sci_base"], branch: "left", branchIndex: 0 },
+        { id: "sci_left_1", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_0"], branch: "left", branchIndex: 1 },
+        { id: "sci_left_2", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_1"], branch: "left", branchIndex: 2 },
+        { id: "sci_left_3", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_2"], branch: "left", branchIndex: 3 },
+        { id: "sci_right_0", name: "", cost: 0, maxLevel: 1, requires: ["sci_base"], branch: "right", branchIndex: 0 },
+        { id: "sci_right_1", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_0"], branch: "right", branchIndex: 1 },
+        { id: "sci_right_2", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_1"], branch: "right", branchIndex: 2 },
+        { id: "sci_right_3", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_2"], branch: "right", branchIndex: 3 },
+        { id: "sci_top", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_3", "sci_right_3"], branch: "top", branchIndex: 0 }
+      ]
+    },
+    {
+      id: "looter",
+      name: "LOOTER",
+      branched: true,
+      nodes: [
+        { id: "loot_base", name: "", cost: 0, maxLevel: 1, branch: "base", branchIndex: 0 },
+        { id: "loot_left_0", name: "", cost: 0, maxLevel: 1, requires: ["loot_base"], branch: "left", branchIndex: 0 },
+        { id: "loot_left_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_0"], branch: "left", branchIndex: 1 },
+        { id: "loot_left_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_1"], branch: "left", branchIndex: 2 },
+        { id: "loot_left_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_2"], branch: "left", branchIndex: 3 },
+        { id: "loot_right_0", name: "", cost: 0, maxLevel: 1, requires: ["loot_base"], branch: "right", branchIndex: 0 },
+        { id: "loot_right_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_0"], branch: "right", branchIndex: 1 },
+        { id: "loot_right_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_1"], branch: "right", branchIndex: 2 },
+        { id: "loot_right_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_2"], branch: "right", branchIndex: 3 },
+        { id: "loot_top", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_3", "loot_right_3"], branch: "top", branchIndex: 0 }
+      ]
+    }
+  ];
+  let currentCoreTreeIndex = 0;
+  let coreTreeSlideDir = null;
+  let currentCoreInfoId = null;
+
   // ========= Inputs =========
   const keys=new Set();
   addEventListener("keydown",(e)=>{
@@ -422,6 +497,21 @@
   let tokensAtRunStart=0;
   let runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
   let runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
+  // Blood pools (from enemy kills): type from bloodTypes.js; runBloodMl = ml per blood type id (red, green, blue, …)
+  let bloodPools = [];
+  let runBloodMl = {};
+  let gatheringPool = null;
+  let gatheringStartT = 0;
+  let gatheringAccumulatedMs = 0;
+  const BLOOD_COAGULATE_SEC = 2;
+  const BLOOD_GATHER_SEC = 2;
+  const BLOOD_GATHER_RADIUS = 30;
+  const BLOOD_POOL_MAX_AGE_SEC = 10;
+  const BLOOD_POOL_REMOVE_AFTER_SEC = 20; // 10s to dark, then 10s more on board, then remove
+  // Five red stages (light → almost black), 2s each over 10s; then coagulated (can't sample); remove after 20s
+  const BLOOD_POOL_COLOR_STAGES = ["#f04444", "#c0392b", "#922b21", "#641e16", "#1a0505"];
+  const BLOOD_POOL_CHANCE_NORMAL = 0.10;
+  const BLOOD_POOL_CHANCE_ELITE = 0.35;
 
   // High score
   let hiBestTime = +localStorage.getItem("affixloot_best_time") || 0;
@@ -493,6 +583,23 @@
       return typeof o==="object" ? o : {};
     } catch(e){ return {}; }
   })();
+  let skillTreePurchased = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_skill_tree_purchased");
+      if(!raw) return {};
+      const o = JSON.parse(raw);
+      return typeof o==="object" ? o : {};
+    } catch(e){ return {}; }
+  })();
+  let baseBloodMl = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_base_blood_ml");
+      if(!raw) return {};
+      const o = JSON.parse(raw);
+      return typeof o==="object" ? o : {};
+    } catch(e){ return {}; }
+  })();
+  const BLOOD_EXCHANGE_ML_PER_TOKEN = 50;
   let runTotalXp = 0;
   let tokenBarProgress = 0; // 0..1000, grant 1 token at 1000 then reset
   let tokenPops = []; // { x, y, t, life } world coords, drawn above player
@@ -845,6 +952,11 @@
       const color = RAR[t]?.color || "rgba(255,255,255,.8)";
       return `<div class="extractionSummaryRow" style="border-left-color:${color}"><span>${label}</span><span class="mono">${data.bloodMlByType[t]} ml</span></div>`;
     }).join("");
+    const runBlood = data.runBloodMl || {};
+    const runBloodEntries = Object.keys(runBlood).filter(id=>(runBlood[id]|0)>0).map(id=>{
+      const bt = (typeof window.getBloodType==="function" && window.getBloodType(id)) || { name: id, color: "#c0392b" };
+      return `<div class="extractionSummaryRow" style="border-left-color:${bt.color||"#c0392b"}"><span>${bt.name} (samples)</span><span class="mono">${runBlood[id]} ml → lab</span></div>`;
+    }).join("");
     const lootRows = bloodOrder.filter(t=>(data.lootByRarity[t]||0)>0).map(t=>{
       const label = RAR[t]?.name || t;
       const color = RAR[t]?.color || "rgba(255,255,255,.8)";
@@ -867,6 +979,7 @@
           <div class="extractionSummarySectionTitle">Blood (ml, by type)</div>
           <div class="extractionSummaryRows">${bloodRows || "<div class=\"extractionSummaryRow\"><span>—</span><span>None</span></div>"}</div>
         </div>
+        ${runBloodEntries ? `<div class="extractionSummarySection"><div class="extractionSummarySectionTitle">Blood samples → Lab</div><div class="extractionSummaryRows">${runBloodEntries}</div></div>` : ""}
         <button type="button" class="extractionSummaryBack">Back</button>
       </div>
     `;
@@ -1432,6 +1545,70 @@
     dropXP(e.x,e.y, e.elite, e.boss);
     dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
 
+    // Blood pool: only some enemies drop blood; bosses always do.
+    let makeBloodPool = true;
+    if(!e.boss){
+      const p = e.elite ? BLOOD_POOL_CHANCE_ELITE : BLOOD_POOL_CHANCE_NORMAL;
+      if(Math.random() >= p) makeBloodPool = false;
+    }
+    if(makeBloodPool){
+      const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
+      const bloodType = (typeof window.getRandomBloodTypeForLevel === "function")
+        ? window.getRandomBloodTypeForLevel(levelId)
+        : (window.BLOOD_TYPES && window.BLOOD_TYPES[0]) || { id: "red", name: "Red", color: "#c0392b" };
+      if (bloodType) {
+        let ml = 8 + Math.floor(Math.random() * 8);
+        if (e.elite) ml = 20 + Math.floor(Math.random() * 16);
+        if (e.boss) ml = 50 + Math.floor(Math.random() * 50);
+        const col = bloodType.color || "#c0392b";
+        const scale = e.boss ? 1.8 : (e.elite ? 1.25 : 1);
+        const baseR = 14 * DPR;
+        const mainR = baseR * scale;
+        const secondary = [];
+        for (let i = 0; i < 2; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const secR = mainR * rand(0.28, 0.38);
+          const dist = mainR - secR + rand(0, 1.4 * secR);
+          secondary.push({ dx: Math.cos(angle) * dist, dy: Math.sin(angle) * dist, r: secR });
+        }
+        const splatter = [];
+        const nSplatter = 5 + Math.floor(Math.random() * 6);
+        for (let i = 0; i < nSplatter; i++) {
+          const dx = mainR * rand(-1.15, 1.15);
+          const dy = mainR * rand(-1.15, 1.15);
+          const sr = mainR * rand(1/20, 1/15);
+          splatter.push({ dx, dy, r: sr });
+        }
+        bloodPools.push({
+          x: e.x, y: e.y,
+          bloodTypeId: bloodType.id,
+          bloodTypeColor: col,
+          ml,
+          spawnT: now(),
+          gathered: false,
+          scale,
+          mainR,
+          secondary,
+          splatter
+        });
+        // Small blood-splat burst when pool appears.
+        for(let n=0;n<9;n++){
+          const a = Math.random()*Math.PI*2;
+          const sp = rand(40,140)*DPR;
+          particles.push({
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a)*sp,
+            vy: Math.sin(a)*sp*0.4,
+            r: rand(2.5,5)*DPR,
+            life: rand(0.25,0.5),
+            t: 0,
+            col: col
+          });
+        }
+      }
+    }
+
     if(e.boss){
       bossKilled=true;
       showSimpleToast("Extraction available — press X to leave.");
@@ -1518,6 +1695,20 @@
   }
 
   // ========= Main Menu / High Score =========
+  const C64_LOADING_COLORS = [
+    "#352879", "#6C5EB5", "#6F4FBD", "#B36BBD", "#40318D", "#67B6BD", "#FFFFFF",
+    "#883932", "#55A049", "#8B3F96", "#BFCE72", "#8B542B", "#574200", "#B86962",
+    "#505050", "#787878", "#94E089", "#7869C4", "#9F9F9F", "#000000"
+  ];
+  function buildC64Lines(count){
+    const colors = C64_LOADING_COLORS;
+    let html = "";
+    for (let i = 0; i < count; i++) {
+      const col = colors[Math.floor(Math.random() * colors.length)];
+      html += `<div class="c64Line" style="background:${col};"></div>`;
+    }
+    return html;
+  }
   function showSplash(){
     running=false; paused=false; inCompare=false;
     overlay.classList.remove("hidden");
@@ -1527,9 +1718,15 @@
     ovBtns.innerHTML="";
     ovTitle.textContent="";
     ovSub.textContent="";
+    const lineCount = Math.max(28, Math.ceil((typeof innerHeight === "number" ? innerHeight : 600) / 18));
     ovBody.innerHTML=`
       <div class="menuSplashWrap" id="splashWrap">
-        <div class="menuSplashPrompt">Click to start</div>
+        <div class="menuSplashC64Side menuSplashC64Left">${buildC64Lines(lineCount)}</div>
+        <div class="menuSplashCenter">
+          <img src="assets/graphics/Main Menu.jpg" alt="" />
+          <div class="menuSplashPrompt">Click to start</div>
+        </div>
+        <div class="menuSplashC64Side menuSplashC64Right">${buildC64Lines(lineCount)}</div>
       </div>
     `;
     const wrap = document.getElementById("splashWrap");
@@ -1609,10 +1806,10 @@
     const bgHighlight = document.getElementById("menuHubBgHighlightImg");
     const clickHandlers = {
       contracts: () => showComingSoonPopup(),
-      chem: () => showComingSoonPopup(),
+      chem: () => showChemistryLab(),
       armory: () => showComingSoonPopup(),
       intel: () => showComingSoonPopup(),
-      core: () => showSimpleToast("Core Systems — coming soon"),
+      core: () => showCoreSystemsMenu(),
       options: () => showComingSoonPopup(),
       drop: () => { ensureAudio(); showChooseLevelMenu(); }
     };
@@ -1758,6 +1955,485 @@
     btnWrap.appendChild(startBtn);
     btnWrap.appendChild(backBtn);
     ovBody.appendChild(btnWrap);
+  }
+
+  function showChemistryLab(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Chemistry Lab";
+    ovSub.textContent="Stored blood from extractions. Exchange blood for tokens.";
+    ovBtns.innerHTML="";
+    const bloodTypes = (typeof window.BLOOD_TYPES !== "undefined" && window.BLOOD_TYPES.length) ? window.BLOOD_TYPES : [{ id: "red", name: "Red", color: "#c0392b" }];
+    let totalMl = 0;
+    for(const id in baseBloodMl) totalMl += baseBloodMl[id]|0;
+    const canExchange = Math.floor(totalMl / BLOOD_EXCHANGE_ML_PER_TOKEN);
+    const wrap = document.createElement("div");
+    wrap.className = "chemLabWrap";
+    wrap.style.cssText = "display:flex; flex-direction:column; gap:14px; max-width:420px;";
+    const tubeList = document.createElement("div");
+    tubeList.className = "chemLabTubes";
+    tubeList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
+    for(const bt of bloodTypes){
+      const ml = baseBloodMl[bt.id]|0;
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex; align-items:center; gap:12px; padding:10px 14px; background:rgba(0,0,0,.25); border-radius:10px; border-left:4px solid " + (bt.color||"#c0392b") + ";";
+      row.innerHTML = `<span style="font-weight:800;">${bt.name}</span><span class="mono" style="margin-left:auto;">${ml} ml</span>`;
+      tubeList.appendChild(row);
+    }
+    wrap.appendChild(tubeList);
+    const totalRow = document.createElement("div");
+    totalRow.style.cssText = "font-weight:900; padding:10px 0; border-top:1px solid rgba(255,255,255,.2);";
+    totalRow.textContent = `Total: ${totalMl} ml`;
+    wrap.appendChild(totalRow);
+    const exchangeBtn = document.createElement("button");
+    exchangeBtn.className = "menuBtnPrimary";
+    exchangeBtn.textContent = canExchange > 0 ? `Exchange ${canExchange * BLOOD_EXCHANGE_ML_PER_TOKEN} ml → ${canExchange} token${canExchange !== 1 ? "s" : ""}` : "No blood to exchange (50 ml = 1 token)";
+    exchangeBtn.disabled = canExchange <= 0;
+    if(canExchange > 0){
+      exchangeBtn.onclick = () => {
+        const toRemove = canExchange * BLOOD_EXCHANGE_ML_PER_TOKEN;
+        let remaining = toRemove;
+        for(const bt of bloodTypes){
+          if(remaining <= 0) break;
+          const have = baseBloodMl[bt.id]|0;
+          const take = Math.min(have, remaining);
+          if(take > 0){ baseBloodMl[bt.id] = have - take; remaining -= take; }
+        }
+        tokens += canExchange;
+        localStorage.setItem("affixloot_tokens", String(tokens));
+        localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
+        beep({freq:523,dur:0.08,type:"sine",gain:0.1});
+        showChemistryLab();
+      };
+    }
+    wrap.appendChild(exchangeBtn);
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => showMainMenu();
+    wrap.appendChild(backBtn);
+    ovBody.innerHTML = "";
+    ovBody.appendChild(wrap);
+  }
+
+  function showCoreSystemsMenu(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Core Systems";
+    ovSub.textContent="";
+    ovBtns.innerHTML="";
+    for(const tree of SKILL_TREES){
+      for(const node of tree.nodes){
+        if(skillTreePurchased[node.id] && !(skillLevels[node.id] > 0)){
+          skillLevels[node.id] = 1;
+        }
+      }
+    }
+    try{ localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels)); }catch(e){}
+
+    const panel = document.createElement("div");
+    panel.className = "coreSystemsPanel";
+    panel.style.cssText = "position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:70vw; height:70vh; max-width:1200px; max-height:900px; background:linear-gradient(180deg, #0a1642 0%, #0d1f52 40%, #081236 100%); border-radius:16px; box-shadow:0 0 60px rgba(0,30,80,.6), inset 0 0 120px rgba(80,120,200,.08); border:1px solid rgba(100,160,255,.2); overflow:hidden; display:flex; flex-direction:column; z-index:100;";
+    const starsLayer = document.createElement("div");
+    starsLayer.className = "coreSystemsStars";
+    starsLayer.style.cssText = "position:absolute; inset:0; pointer-events:none; overflow:hidden;";
+    const starCount = 120;
+    for(let i = 0; i < starCount; i++){
+      const star = document.createElement("div");
+      star.className = "coreStar";
+      star.style.cssText = "position:absolute; width:2px; height:2px; background:#fff; border-radius:50%; left:" + (Math.random()*100) + "%; top:" + (Math.random()*100) + "%; animation:coreStarTwinkle " + (1.2 + Math.random()*2) + "s ease-in-out infinite; animation-delay:" + (Math.random()*2) + "s; opacity:" + (0.4 + Math.random()*0.6) + ";";
+      starsLayer.appendChild(star);
+    }
+    panel.appendChild(starsLayer);
+    const content = document.createElement("div");
+    content.className = "coreSystemsContent";
+    content.style.cssText = "position:relative; z-index:1; flex:1; display:flex; flex-direction:column; padding:16px 20px; min-height:0;";
+    const topBar = document.createElement("div");
+    topBar.style.cssText = "display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:10px; flex-shrink:0;";
+    const tokensSpan = document.createElement("span");
+    tokensSpan.className = "coreSystemsTokens";
+    tokensSpan.textContent = "Tokens: " + tokens;
+    topBar.appendChild(tokensSpan);
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "coreSystemsNavBtn";
+    prevBtn.textContent = "◀";
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "coreSystemsNavBtn";
+    nextBtn.textContent = "▶";
+    const backBtn = document.createElement("button");
+    backBtn.className = "coreSystemsBackBtn";
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => showMainMenu();
+    topBar.appendChild(backBtn);
+    content.appendChild(topBar);
+    const treesArea = document.createElement("div");
+    treesArea.className = "coreSystemsTreesArea";
+    treesArea.style.cssText = "flex:1; display:flex; justify-content:center; align-items:stretch; min-height:0; padding:0 10px; gap:18px;";
+    const tree = SKILL_TREES[currentCoreTreeIndex] || SKILL_TREES[0];
+    const slideDir = coreTreeSlideDir;
+    coreTreeSlideDir = null;
+
+    const infoPanel = document.createElement("div");
+    infoPanel.className = "coreTreeInfoPanel";
+    infoPanel.style.cssText = "position:absolute; max-width:240px; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:8px 12px; font-size:11px; line-height:1.4; box-shadow:0 0 24px rgba(0,0,0,.7); overflow:auto; display:none; pointer-events:none; z-index:5;";
+
+    function buildNodeRow(node, level, maxLevel, unlocked, canUpgrade){
+      const row = document.createElement("div");
+      row.className = "coreTreeNodeRow";
+      row.style.cssText = "display:flex; flex-direction:row; align-items:center; gap:10px; flex-shrink:0; transform:translateX(-60px);";
+      const costCell = document.createElement("div");
+      costCell.className = "coreTreeCostCell";
+      costCell.style.cssText = "width:72px; text-align:right; font-size:9px; font-weight:800; color:rgba(200,220,255,.9); min-width:72px; white-space:nowrap;";
+      costCell.textContent = canUpgrade ? ("COST: " + String(node.cost)) : "";
+      row.appendChild(costCell);
+      const balloonWrap = document.createElement("div");
+      balloonWrap.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:4px;";
+      const balloon = document.createElement("div");
+      balloon.className = "coreTreeBalloon";
+      balloon.style.cssText = "width:162px; height:108px; border-radius:50%; background:rgb(50,100,180); border:2px solid rgba(120,180,255,.8); box-shadow:0 0 20px rgba(80,140,220,.35), inset 0 0 20px rgba(255,255,255,.08); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8px 12px; box-sizing:border-box;";
+      if(!unlocked){ balloon.style.background = "rgb(45,55,75)"; balloon.style.borderColor = "rgba(100,120,140,.8)"; }
+      else if(level >= maxLevel){ balloon.style.background = "rgb(60,140,100)"; balloon.style.borderColor = "rgba(140,220,180,.8)"; }
+      const nameShort = node.name.length > 12 ? node.name.slice(0,11)+"…" : node.name;
+      const balloonName = document.createElement("span");
+      balloonName.className = "coreBalloonName";
+      balloonName.textContent = nameShort;
+      balloonName.style.cssText = "font-size:9px; font-weight:800; line-height:1.2; color:rgba(255,255,255,.98); text-align:center;";
+      balloon.appendChild(balloonName);
+      if(level >= 1){
+        const balloonLevel = document.createElement("span");
+        balloonLevel.className = "coreBalloonLevel";
+        balloonLevel.textContent = level >= maxLevel ? "Level MAX" : "Level " + level;
+        balloonLevel.style.cssText = "font-size:8px; font-weight:800; color:rgba(255,255,255,.75); margin-top:2px;";
+        balloon.appendChild(balloonLevel);
+      }
+      balloonWrap.appendChild(balloon);
+
+      balloon.addEventListener("mouseenter", () => { balloon.classList.add("coreTreeBalloonHover"); });
+      balloon.addEventListener("mouseleave", () => { balloon.classList.remove("coreTreeBalloonHover"); });
+      if(level < maxLevel) balloon.style.cursor = "pointer";
+      balloon.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if(level >= maxLevel) return;
+        panel.querySelectorAll(".coreTreeConfirmMenu").forEach(m => m.remove());
+        const menu = document.createElement("div");
+        menu.className = "coreTreeConfirmMenu";
+        menu.style.cssText = "position:absolute; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:10px 14px; font-size:11px; z-index:15; box-shadow:0 4px 20px rgba(0,0,0,.6); display:flex; flex-direction:column; gap:8px; min-width:140px;";
+        const rect = balloon.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        menu.style.left = (rect.left - panelRect.left + rect.width / 2 - 70) + "px";
+        menu.style.top = (rect.bottom - panelRect.top + 8) + "px";
+        const confirmBtn = document.createElement("button");
+        confirmBtn.textContent = "CONFIRM UPGRADE";
+        confirmBtn.style.cssText = "padding:8px 12px; border:1px solid rgba(124,255,178,.6); background:rgba(124,255,178,.2); color:#b8ffe0; font-weight:800; cursor:pointer; border-radius:6px;";
+        confirmBtn.disabled = !canUpgrade;
+        if(!canUpgrade) confirmBtn.style.opacity = "0.6";
+        confirmBtn.onclick = () => {
+          if(!canUpgrade) return;
+          tokens -= node.cost;
+          skillLevels[node.id] = (skillLevels[node.id]||0) + 1;
+          localStorage.setItem("affixloot_tokens", String(tokens));
+          localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
+          beep({freq:640,dur:0.06,type:"triangle",gain:0.05});
+          showCoreSystemsMenu();
+        };
+        const backBtn = document.createElement("button");
+        backBtn.textContent = "BACK";
+        backBtn.style.cssText = "padding:8px 12px; border:1px solid rgba(255,255,255,.5); background:rgba(255,255,255,.1); color:#fff; font-weight:800; cursor:pointer; border-radius:6px;";
+        backBtn.onclick = () => { menu.remove(); };
+        menu.appendChild(confirmBtn);
+        menu.appendChild(backBtn);
+        panel.appendChild(menu);
+      });
+
+      row.addEventListener("mouseenter", () => {
+        panel.querySelectorAll(".coreTreeConfirmMenu").forEach(m => m.remove());
+        if(!infoPanel) return;
+        const info = describeCoreNode(node, level, maxLevel);
+        infoPanel.innerHTML = `
+          <div class="coreTreeInfoTitle">${info.title}</div>
+          ${info.desc ? `<div class="coreTreeInfoDesc">${info.desc}</div>` : ""}
+          <div class="coreTreeInfoStats">
+            <div class="coreTreeStatRow"><span class="coreTreeStatLabel">Current stat</span><div class="coreTreeStatValue">${info.current}</div></div>
+            <div class="coreTreeStatRow"><span class="coreTreeStatLabel">Next stat</span><div class="coreTreeStatValue">${info.next}</div></div>
+          </div>
+        `;
+        const panelRect = panel.getBoundingClientRect();
+        const balloonRect = balloon.getBoundingClientRect();
+        const left = Math.min(panelRect.width - 260, Math.max(8, balloonRect.right - panelRect.left + 10));
+        const top = Math.max(8, balloonRect.top - panelRect.top - 4);
+        infoPanel.style.left = left + "px";
+        infoPanel.style.top = top + "px";
+        infoPanel.style.display = "block";
+      });
+      row.addEventListener("mouseleave", () => {
+        infoPanel.style.display = "none";
+      });
+
+      row.appendChild(balloonWrap);
+      return row;
+    }
+
+    function describeCoreNode(node, level, maxLevel){
+      const nextLevel = Math.min(maxLevel, level + 1);
+      const info = { title: node.name, desc: "", current: "", next: "" };
+      const pct = (v)=> (v*100).toFixed(0) + "%";
+      switch(node.id){
+        case "war_base": {
+          const curMul = 1 + 0.10*level;
+          const nxtMul = 1 + 0.10*nextLevel;
+          info.desc = "Increase base weapon damage for all attacks.";
+          info.current = level === 0 ? "Damage multiplier: ×1.00" : "Damage multiplier: ×" + curMul.toFixed(2);
+          info.next = level >= maxLevel ? "Max level reached." : "Damage multiplier at next level: ×" + nxtMul.toFixed(2);
+          break;
+        }
+        case "war_crit_chance": {
+          const cur = 0.03*level;
+          const nxt = 0.03*nextLevel;
+          info.desc = "Increase chance to deal a critical hit.";
+          info.current = "Crit chance bonus: " + pct(cur);
+          info.next = level >= maxLevel ? "Max level reached." : "Crit chance bonus at next level: " + pct(nxt);
+          break;
+        }
+        case "war_crit_dmg": {
+          const cur = 0.25*level;
+          const nxt = 0.25*nextLevel;
+          info.desc = "Increase how hard critical hits strike.";
+          info.current = "Crit damage bonus: +" + (cur*100).toFixed(0) + "%";
+          info.next = level >= maxLevel ? "Max level reached." : "Crit damage bonus at next level: +" + (nxt*100).toFixed(0) + "%";
+          break;
+        }
+        case "war_stun_chance": {
+          const cur = 0.05*level;
+          const nxt = 0.05*nextLevel;
+          info.desc = "Chance to briefly stun enemies you hit.";
+          info.current = "Stun chance: " + pct(cur);
+          info.next = level >= maxLevel ? "Max level reached." : "Stun chance at next level: " + pct(nxt);
+          break;
+        }
+        case "war_stun_duration": {
+          const baseDur = 0.6;
+          const cur = baseDur + 0.25*level;
+          const nxt = baseDur + 0.25*nextLevel;
+          info.desc = "How long stunned enemies stay unable to move.";
+          info.current = "Stun duration: " + cur.toFixed(2) + "s";
+          info.next = level >= maxLevel ? "Max level reached." : "Stun duration at next level: " + nxt.toFixed(2) + "s";
+          break;
+        }
+        case "war_rate": {
+          const cur = 0.06*level;
+          const nxt = 0.06*nextLevel;
+          info.desc = "Increase your attack speed.";
+          info.current = "Rate of fire bonus: " + pct(cur);
+          info.next = level >= maxLevel ? "Max level reached." : "Rate of fire bonus at next level: " + pct(nxt);
+          break;
+        }
+        case "war_pierce_chance": {
+          const cur = 0.08*level;
+          const nxt = 0.08*nextLevel;
+          info.desc = "Chance for shots to pierce through enemies.";
+          info.current = "Pierce chance: " + pct(cur);
+          info.next = level >= maxLevel ? "Max level reached." : "Pierce chance at next level: " + pct(nxt);
+          break;
+        }
+        case "war_pierce_dmg": {
+          const cur = 0.15*level;
+          const nxt = 0.15*nextLevel;
+          info.desc = "Damage dealt to enemies after the first pierce.";
+          info.current = "Pierce damage: +" + (cur*100).toFixed(0) + "%";
+          info.next = level >= maxLevel ? "Max level reached." : "Pierce damage at next level: +" + (nxt*100).toFixed(0) + "%";
+          break;
+        }
+        case "war_splash": {
+          const cur = 0.15*level;
+          const nxt = 0.15*nextLevel;
+          info.desc = "Area damage around where your shots land.";
+          info.current = "Splash radius & damage: +" + (cur*100).toFixed(0) + "%";
+          info.next = level >= maxLevel ? "Max level reached." : "Splash at next level: +" + (nxt*100).toFixed(0) + "%";
+          break;
+        }
+        case "war_obliterate": {
+          const cur = 0.02*level;
+          const nxt = 0.02*nextLevel;
+          info.desc = "Small chance to instantly obliterate non-boss enemies. Mini-bosses have reduced chance. Always spawns a blood pool with extra gore.";
+          info.current = "Obliterate chance: " + pct(cur) + " on normal mobs (less on mini-bosses).";
+          info.next = level >= maxLevel ? "Max level reached." : "Obliterate chance at next level: " + pct(nxt) + " on normal mobs.";
+          break;
+        }
+        default: {
+          info.desc = "No detailed description yet.";
+          info.current = level <= 0 ? "No effect yet." : "Effect is active.";
+          info.next = level >= maxLevel ? "Max level reached." : "Next level will improve this effect.";
+        }
+      }
+      return info;
+    }
+
+    if(tree && tree.branched && tree.nodes && tree.nodes.length){
+      const col = document.createElement("div");
+      col.className = "coreTreeColumn coreTreeBranched";
+      col.style.cssText = "display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; max-width:1260px;";
+      if(slideDir === "next") col.style.animation = "coreTreeSlideFromRight 0.28s ease-out";
+      else if(slideDir === "prev") col.style.animation = "coreTreeSlideFromLeft 0.28s ease-out";
+      const leftNodes = tree.nodes.filter(n=>n.branch==="left").sort((a,b)=>a.branchIndex-b.branchIndex);
+      const rightNodes = tree.nodes.filter(n=>n.branch==="right").sort((a,b)=>a.branchIndex-b.branchIndex);
+      const baseNode = tree.nodes.find(n=>n.branch==="base");
+      const topNode = tree.nodes.find(n=>n.branch==="top");
+      const branchWrap = document.createElement("div");
+      branchWrap.className = "coreTreeBranchWrap";
+      branchWrap.style.cssText = "position:relative; flex:1; width:100%; min-height:320px; display:flex; flex-direction:column; justify-content:space-between; padding:8px 0;";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
+      svg.setAttribute("class","coreTreeBranchSvg");
+      svg.setAttribute("viewBox","0 0 400 320");
+      svg.setAttribute("preserveAspectRatio","none");
+      svg.style.cssText = "position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:0;";
+      const path = document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("fill","none");
+      path.setAttribute("stroke","rgba(100,160,220,.55)");
+      path.setAttribute("stroke-width","2");
+      path.setAttribute("d","M 200 300 L 80 240 L 80 180 L 80 120 L 80 60 L 200 24 M 200 300 L 320 240 L 320 180 L 320 120 L 320 60 L 200 24");
+      svg.appendChild(path);
+      branchWrap.appendChild(svg);
+      const topRow = document.createElement("div");
+      topRow.style.cssText = "display:flex; justify-content:center; position:relative; z-index:1; flex-shrink:0; transform:translateX(10px);";
+      if(topNode){
+        const l = Math.min(skillLevels[topNode.id]||0, topNode.maxLevel||SKILL_TREE_MAX_LEVEL);
+        const ml = topNode.maxLevel != null ? topNode.maxLevel : SKILL_TREE_MAX_LEVEL;
+        const req = Array.isArray(topNode.requires)?topNode.requires:[];
+        let un = true; for(const r of req) if((skillLevels[r]||0)<=0){ un=false; break; }
+        const can = un && l < ml && tokens >= topNode.cost;
+        topRow.appendChild(buildNodeRow(topNode, l, ml, un, can));
+      }
+      const midRow = document.createElement("div");
+      midRow.style.cssText = "display:flex; justify-content:space-between; align-items:flex-start; flex:1; min-height:0; position:relative; z-index:1; padding:0; transform:translateX(19px);";
+      const leftCol = document.createElement("div");
+      leftCol.style.cssText = "flex:0 0 40%; display:flex; flex-direction:column-reverse; justify-content:space-around; align-items:center; padding-bottom:22%; box-sizing:border-box;";
+      const midSpacer = document.createElement("div");
+      midSpacer.style.cssText = "flex:0 0 20%; min-width:0;";
+      const rightCol = document.createElement("div");
+      rightCol.style.cssText = "flex:0 0 40%; display:flex; flex-direction:column-reverse; justify-content:space-around; align-items:center; padding-bottom:22%; box-sizing:border-box;";
+      for(const node of leftNodes){
+        const level = Math.min(skillLevels[node.id]||0, node.maxLevel||SKILL_TREE_MAX_LEVEL);
+        const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
+        const requires = Array.isArray(node.requires)?node.requires:[];
+        let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
+        leftCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+      }
+      for(const node of rightNodes){
+        const level = Math.min(skillLevels[node.id]||0, node.maxLevel||SKILL_TREE_MAX_LEVEL);
+        const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
+        const requires = Array.isArray(node.requires)?node.requires:[];
+        let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
+        rightCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+      }
+      midRow.appendChild(leftCol);
+      midRow.appendChild(midSpacer);
+      midRow.appendChild(rightCol);
+      const bottomRow = document.createElement("div");
+      bottomRow.style.cssText = "display:flex; justify-content:center; position:relative; z-index:1; flex-shrink:0; transform:translateX(10px);";
+      if(baseNode){
+        const level = Math.min(skillLevels[baseNode.id]||0, baseNode.maxLevel||SKILL_TREE_MAX_LEVEL);
+        const maxLevel = baseNode.maxLevel != null ? baseNode.maxLevel : SKILL_TREE_MAX_LEVEL;
+        bottomRow.appendChild(buildNodeRow(baseNode, level, maxLevel, true, level < maxLevel && tokens >= baseNode.cost));
+      }
+      branchWrap.appendChild(topRow);
+      branchWrap.appendChild(midRow);
+      branchWrap.appendChild(bottomRow);
+      const label = document.createElement("div");
+      label.className = "coreTreeLabel";
+      label.textContent = tree.name;
+      label.style.cssText = "font-size:28px; font-weight:900; letter-spacing:.18em; color:rgba(220,235,255,.96); margin-bottom:14px; flex-shrink:0; text-shadow:0 0 16px rgba(120,180,255,.6); text-align:center;";
+      col.appendChild(label);
+      col.appendChild(branchWrap);
+      if(tree.id !== "warrior"){
+        col.style.position = "relative";
+        const comingSoon = document.createElement("div");
+        comingSoon.className = "coreTreeComingSoon";
+        comingSoon.textContent = "COMING SOON";
+        comingSoon.style.cssText = "position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:32px; font-weight:900; letter-spacing:0.2em; color:rgba(220,235,255,.95); text-shadow:0 0 24px rgba(120,180,255,.7); z-index:10; pointer-events:none;";
+        col.appendChild(comingSoon);
+      }
+      treesArea.appendChild(col);
+    } else if(tree && tree.nodes && tree.nodes.length){
+      const col = document.createElement("div");
+      col.className = "coreTreeColumn";
+      col.style.cssText = "display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; max-width:220px;";
+      if(slideDir === "next") col.style.animation = "coreTreeSlideFromRight 0.28s ease-out";
+      else if(slideDir === "prev") col.style.animation = "coreTreeSlideFromLeft 0.28s ease-out";
+      const nodesWrap = document.createElement("div");
+      nodesWrap.className = "coreTreeNodesWrap";
+      nodesWrap.style.cssText = "position:relative; flex:1; width:100%; min-height:0; padding-left:0;";
+      const line = document.createElement("div");
+      line.className = "coreTreeString";
+      line.style.cssText = "position:absolute; width:2px; left:0; top:20px; bottom:20px; background:linear-gradient(180deg, rgba(120,180,255,.5), rgba(80,140,220,.7)); border-radius:1px; z-index:0; pointer-events:none;";
+      nodesWrap.appendChild(line);
+      const nodesCol = document.createElement("div");
+      nodesCol.style.cssText = "position:relative; z-index:1; height:100%; display:flex; flex-direction:column-reverse; justify-content:space-between; align-items:stretch; padding:12px 0 12px 22px; box-sizing:border-box;";
+      for(const node of tree.nodes){
+        const level = Math.min(skillLevels[node.id]||0, node.maxLevel || SKILL_TREE_MAX_LEVEL);
+        const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
+        const requires = Array.isArray(node.requires) ? node.requires : [];
+        let unlocked = true;
+        for(const reqId of requires){ if((skillLevels[reqId]||0) <= 0){ unlocked = false; break; } }
+        nodesCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+      }
+      nodesWrap.appendChild(nodesCol);
+      col.appendChild(nodesWrap);
+      const label = document.createElement("div");
+      label.className = "coreTreeLabel";
+      label.textContent = tree.name;
+      label.style.cssText = "font-size:28px; font-weight:900; letter-spacing:.18em; color:rgba(220,235,255,.96); margin-bottom:14px; flex-shrink:0; text-shadow:0 0 16px rgba(120,180,255,.6); text-align:center;";
+      col.appendChild(label);
+      treesArea.appendChild(col);
+    } else if(tree){
+      const col = document.createElement("div");
+      col.className = "coreTreeColumn";
+      col.style.cssText = "display:flex; flex-direction:column; align-items:center; flex:1;";
+      if(slideDir === "next") col.style.animation = "coreTreeSlideFromRight 0.28s ease-out";
+      else if(slideDir === "prev") col.style.animation = "coreTreeSlideFromLeft 0.28s ease-out";
+      const label = document.createElement("div");
+      label.className = "coreTreeLabel";
+      label.textContent = tree.name;
+      label.style.cssText = "font-size:28px; font-weight:900; letter-spacing:.18em; color:rgba(220,235,255,.96); margin-bottom:14px; flex-shrink:0; text-shadow:0 0 16px rgba(120,180,255,.6); text-align:center;";
+      col.appendChild(label);
+      treesArea.appendChild(col);
+    }
+
+    if(tree && tree.nodes && tree.nodes.length){
+      panel.appendChild(infoPanel);
+    }
+    content.appendChild(treesArea);
+    panel.appendChild(content);
+
+    // Side navigation buttons (left/right) – wrap around first/last
+    if(prevBtn){
+      prevBtn.style.cssText = "position:absolute; left:12px; top:50%; transform:translateY(-50%); z-index:20;";
+      panel.appendChild(prevBtn);
+      prevBtn.onclick = () => {
+        currentCoreTreeIndex = (currentCoreTreeIndex - 1 + SKILL_TREES.length) % SKILL_TREES.length;
+        currentCoreInfoId = null;
+        coreTreeSlideDir = "prev";
+        beep({freq:420,dur:0.08,type:"square",gain:0.04});
+        showCoreSystemsMenu();
+      };
+    }
+    if(nextBtn){
+      nextBtn.style.cssText = "position:absolute; right:12px; top:50%; transform:translateY(-50%); z-index:20;";
+      panel.appendChild(nextBtn);
+      nextBtn.onclick = () => {
+        currentCoreTreeIndex = (currentCoreTreeIndex + 1) % SKILL_TREES.length;
+        currentCoreInfoId = null;
+        coreTreeSlideDir = "next";
+        beep({freq:520,dur:0.08,type:"square",gain:0.04});
+        showCoreSystemsMenu();
+      };
+    }
+    panel.addEventListener("mousedown", (e) => {
+      const open = panel.querySelector(".coreTreeConfirmMenu");
+      if(open && !open.contains(e.target)) open.remove();
+    });
+    ovBody.innerHTML = "";
+    ovBody.appendChild(panel);
   }
 
   function showHighScore(){
@@ -1925,6 +2601,10 @@
     deathSequence=null;
     runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
     runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
+    bloodPools = [];
+    runBloodMl = {};
+    gatheringPool = null;
+    gatheringAccumulatedMs = 0;
 
     runTotalXp = 0;
     tokenBarProgress = 0;
@@ -2016,6 +2696,8 @@
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState(true);
+    // TODO TEST: remove after testing today – force a starting weapon every run
+    equipped.weapon = makeItem("weapon", "legendary");
     tokensAtRunStart = tokens;
     recomputeBuild();
     renderEquipMini();
@@ -2160,7 +2842,8 @@
         extractionSummaryData = {
           tokensEarned: Math.max(0, tokens - tokensAtRunStart),
           lootByRarity: { ...runLootByRarity },
-          bloodMlByType: { ...runBloodMlByType }
+          bloodMlByType: { ...runBloodMlByType },
+          runBloodMl: { ...runBloodMl }
         };
         extractionTransition = { t: 0, duration: 1.2 };
         extractionLiftoff=null;
@@ -2174,6 +2857,8 @@
       extractionTransition.t += dt;
       if(extractionTransition.t >= extractionTransition.duration){
         const savedSummary = extractionSummaryData;
+        for(const id in runBloodMl){ baseBloodMl[id] = (baseBloodMl[id]||0) + runBloodMl[id]; }
+        if(Object.keys(runBloodMl).length) localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
         extractionTransition = null;
         extractionSummaryData = null;
         running = false;
@@ -2508,6 +3193,47 @@
       }
     }
 
+    // Blood pools: age in seconds; 0–10s = sampleable (red → dark); 10s = coagulated; remove after 20s
+    const R = BLOOD_GATHER_RADIUS * DPR;
+    for (let i = bloodPools.length - 1; i >= 0; i--) {
+      const pool = bloodPools[i];
+      if (pool.gathered) {
+        bloodPools.splice(i, 1);
+        continue;
+      }
+      const ageMs = now() - pool.spawnT;
+      const ageSec = ageMs / 1000;
+      if (ageSec >= BLOOD_POOL_REMOVE_AFTER_SEC) {
+        bloodPools.splice(i, 1);
+        continue;
+      }
+      if (ageSec >= BLOOD_POOL_MAX_AGE_SEC) pool.expired = true;
+      if (!pool.coagulated && ageSec >= BLOOD_COAGULATE_SEC) pool.coagulated = true;
+      if (!pool.coagulated || pool.expired) {
+        if (gatheringPool === pool) gatheringPool = null;
+        continue;
+      }
+      const d2 = dist2(pool.x, pool.y, player.x, player.y);
+      if (d2 < R * R) {
+        if (!gatheringPool || gatheringPool !== pool) {
+          gatheringPool = pool;
+          gatheringAccumulatedMs = 0;
+        }
+        if (!inCompare && !paused) gatheringAccumulatedMs += dt * 1000;
+        if (gatheringAccumulatedMs >= BLOOD_GATHER_SEC * 1000) {
+          runBloodMl[pool.bloodTypeId] = (runBloodMl[pool.bloodTypeId] || 0) + pool.ml;
+          pool.gathered = true;
+          gatheringPool = null;
+          gatheringAccumulatedMs = 0;
+          showSimpleToast("Blood sample secured +" + pool.ml + " ml");
+          beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
+          setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
+        }
+      } else {
+        if (gatheringPool === pool) gatheringPool = null;
+      }
+    }
+
     if(lootPickupCooldown>0) lootPickupCooldown -= dt;
 
     // loot drops -> compare (no magnet; pickup only by walking over)
@@ -2801,6 +3527,15 @@
 
   function render(){
     ctx.clearRect(0,0,W,H);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#000";
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+    ctx.beginPath();
 
     if(extractionTransition){
       ctx.fillStyle = "rgb(0,0,0)";
@@ -2831,6 +3566,7 @@
         drawDoors();
       }
       for(const L of lootDrops) drawLoot(L);
+      for(const p of bloodPools) drawBloodPool(p);
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
       for(const e of enemies) drawEnemy(e);
@@ -2864,6 +3600,7 @@
         ctx.restore();
       }
       for(const ring of levelUpRings) drawLevelUpRing(ring);
+      drawBloodGatherBar();
       for(const p of extractionRocketParticles){
         const t=p.t/p.life;
         ctx.save();
@@ -2895,11 +3632,13 @@
         drawDoors();
       }
       for(const L of lootDrops) drawLoot(L);
+      for(const p of bloodPools) drawBloodPool(p);
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
       for(const e of enemies) drawEnemy(e);
       for(const p of particles) drawParticle(p);
       for(const ring of levelUpRings) drawLevelUpRing(ring);
+      drawBloodGatherBar();
       if(deathSequence) drawCorpse(); else drawPlayer();
       for(const pop of tokenPops) drawTokenPop(pop);
       ctx.restore();
@@ -3267,6 +4006,73 @@
     ctx.fillText(it.icon, 0, 1*DPR);
 
     ctx.restore();
+  }
+
+  function drawBloodPool(pool){
+    const mainR = pool.mainR != null ? pool.mainR : 14 * DPR;
+    const ageSec = (now() - pool.spawnT) / 1000;
+    const coagulated = !!pool.coagulated;
+    const expired = !!pool.expired;
+    const stageIndex = Math.min(4, Math.floor(ageSec / 2));
+    const col = expired ? "#0d0000" : (BLOOD_POOL_COLOR_STAGES[stageIndex] || pool.bloodTypeColor || "#c0392b");
+    ctx.save();
+    ctx.globalAlpha = expired ? 0.7 : 0.96;
+    ctx.fillStyle = col;
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = Math.max(1, 2 * DPR * (pool.scale || 1));
+
+    ctx.beginPath();
+    ctx.arc(pool.x, pool.y, mainR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    if (pool.secondary && pool.secondary.length) {
+      for (const s of pool.secondary) {
+        ctx.beginPath();
+        ctx.arc(pool.x + s.dx, pool.y + s.dy, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (pool.splatter && pool.splatter.length) {
+      for (const sp of pool.splatter) {
+        ctx.beginPath();
+        ctx.arc(pool.x + sp.dx, pool.y + sp.dy, sp.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawBloodGatherBar(){
+    if(!gatheringPool) return;
+    const t = clamp(gatheringAccumulatedMs / (BLOOD_GATHER_SEC * 1000), 0, 1);
+    const bw = 72 * DPR;
+    const bh = 12 * DPR;
+    const x = player.x - bw / 2;
+    const y = player.y - player.r - 32 * DPR;
+    const fillW = bw * (1 - t);
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "rgba(0,0,0,0.85)";
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = 3 * DPR;
+      roundRect(x, y, bw, bh, 999);
+      ctx.fill();
+      ctx.stroke();
+      if(fillW > 3 * DPR){
+        const innerW = fillW - 2 * DPR;
+        if(innerW > 0){
+          ctx.fillStyle = "rgba(255,240,200,0.98)";
+          roundRect(x + (bw - fillW), y + 2*DPR, innerW, bh - 4*DPR, 999);
+          ctx.fill();
+        }
+      }
+    } finally {
+      ctx.restore();
+      ctx.beginPath();
+    }
   }
 
   function drawLevelUpRing(ring){
