@@ -236,9 +236,7 @@
   };
 
   // ========= Dev/Test toggles =========
-  // v1.003.5: temporary test mode where we only spawn a small number of
-  // Skittering Mouse enemies and disable all other mob types and bosses.
-  const TEST_SINGLE_MOB_MODE = true;
+  const TEST_SINGLE_MOB_MODE = false;
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
   const ENDLESS_RUN = true;
 
@@ -251,6 +249,84 @@
   function getLevelConfig(id){
     return LEVELS.find(l=>l.id===id) || LEVELS[0];
   }
+
+  // ========= Quests / Contracts (grunnstruktur) =========
+  const QUEST_STORAGE_KEY = "affixloot_quest_state";
+  const QUEST_COOLDOWN_MS = 5 * 60 * 1000;
+  const QUEST_DEFS = [
+    {
+      id: "kill_mice_easy",
+      kind: "kills",
+      difficulty: "easy",
+      label: "Cull the Vermin",
+      desc: "Kill 120 enemies (mice) across successful runs.",
+      target: 120
+    },
+    {
+      id: "survive_easy",
+      kind: "survive",
+      difficulty: "easy",
+      label: "Stay Alive",
+      desc: "Survive a total of 8 minutes across successful runs.",
+      targetSeconds: 8 * 60
+    },
+    {
+      id: "blood_easy",
+      kind: "blood",
+      difficulty: "easy",
+      label: "Blood Tax",
+      desc: "Collect 1200 ml blood across successful runs.",
+      targetMl: 1200
+    }
+  ];
+
+  function loadQuestState(){
+    try{
+      const raw = localStorage.getItem(QUEST_STORAGE_KEY);
+      if(!raw) return { active:null, proposals:[], cooldownUntil:0, completed:null };
+      const obj = JSON.parse(raw);
+      if(!obj || typeof obj !== "object") return { active:null, proposals:[], cooldownUntil:0, completed:null };
+      return {
+        active: obj.active || null,
+        proposals: Array.isArray(obj.proposals) ? obj.proposals : [],
+        cooldownUntil: obj.cooldownUntil || 0,
+        completed: obj.completed || null
+      };
+    } catch(e){
+      return { active:null, proposals:[], cooldownUntil:0, completed:null };
+    }
+  }
+  function saveQuestState(){
+    try{
+      localStorage.setItem(QUEST_STORAGE_KEY, JSON.stringify(questState));
+    }catch(e){}
+  }
+  function cloneQuestDef(def){
+    return def ? {
+      id: def.id,
+      kind: def.kind,
+      difficulty: def.difficulty,
+      label: def.label,
+      desc: def.desc,
+      target: def.target || 0,
+      targetSeconds: def.targetSeconds || 0,
+      targetMl: def.targetMl || 0,
+      progressKills: 0,
+      progressSeconds: 0,
+      progressMl: 0
+    } : null;
+  }
+  function generateQuestProposals(){
+    const pool = QUEST_DEFS.slice();
+    const out = [];
+    while(pool.length && out.length < 3){
+      const idx = (Math.random() * pool.length) | 0;
+      const def = pool.splice(idx,1)[0];
+      out.push(cloneQuestDef(def));
+    }
+    return out;
+  }
+  let questState = loadQuestState();
 
   const SKILL_TREE_MAX_LEVEL = 3;
   const SKILL_TREES = [
@@ -323,6 +399,24 @@
       ]
     }
   ];
+
+  // Core Systems: scaling token costs per level and tier
+  const CORE_TREE_LEVEL_COST_BASE = [2, 4, 6, 10, 20]; // for Level 1–5
+  function coreTreeTierFactor(node){
+    if(node.branch === "top") return 4; // Obliterate row (highest tier)
+    if(node.branch === "left" || node.branch === "right"){
+      // Three lowest nodes on each side = branchIndex 0–2
+      if(node.branchIndex >= 3) return 2; // next row up on each side
+      return 1;
+    }
+    // Base and any other branches use the lowest tier factor
+    return 1;
+  }
+  function getCoreNodeCost(node, level, maxLevel){
+    if(level >= maxLevel) return 0;
+    const idx = Math.max(0, Math.min(level, CORE_TREE_LEVEL_COST_BASE.length - 1));
+    return CORE_TREE_LEVEL_COST_BASE[idx] * coreTreeTierFactor(node);
+  }
   let currentCoreTreeIndex = 0;
   let coreTreeSlideDir = null;
   let currentCoreInfoId = null;
@@ -472,7 +566,7 @@
   let equipped = {weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
 
   let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
-  let kills=0, lootCount=0, streak=0, streakT=0;
+  let kills=0, minibossKills=0, bossKills=0, lootCount=0, streak=0, streakT=0;
   let threat=1.0, spawnAcc=0, atkCD=0;
   let lootPickupCooldown=0;
 
@@ -554,8 +648,8 @@
     skMouseSprites.gape = null;
   })();
 
-  // Player sprites: front/back animasjon + idle når stå stille.
-  const playerSprites = { front: [], back: [], frontIdle: null, backIdle: null };
+  // Player sprites: front/back animasjon + idle når stå stille + extraction liftoff.
+  const playerSprites = { front: [], back: [], frontIdle: null, backIdle: null, extraction: null };
   (function preloadPlayerSprites(){
     const base = "assets/sprites/Main_Character/";
     const enc = (name) => base + encodeURIComponent(name);
@@ -570,10 +664,18 @@
     ];
     playerSprites.frontIdle = load(enc("Front_Idle.png"));
     playerSprites.backIdle = load(enc("Back_Idle.png"));
+    playerSprites.extraction = load(enc("Character_extraction.png"));
   })();
 
-  const extractionCharImg = new Image();
-  extractionCharImg.src = "assets/sprites/Main_Character/Character_extraction.png";
+  // One-time reset: bump version to clear all progression for a clean release.
+  const AFFIXLOOT_STORAGE_VERSION = 2;
+  (function resetProgressionIfNewVersion(){
+    const key = "affixloot_storage_version";
+    if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
+    const toRemove = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills"];
+    for(const k of toRemove) try{ localStorage.removeItem(k); }catch(e){}
+    try{ localStorage.setItem(key, String(AFFIXLOOT_STORAGE_VERSION)); }catch(e){}
+  })();
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -1545,6 +1647,8 @@
   function killEnemy(e){
     enemies.splice(enemies.indexOf(e),1);
     kills++;
+    if(e.miniboss) minibossKills++;
+    if(e.boss && !e.miniboss) bossKills++;
     streak++; streakT=1.8;
 
     dropXP(e.x,e.y, e.elite, e.boss);
@@ -1810,7 +1914,7 @@
     const bgImg = document.getElementById("menuHubBgImg");
     const bgHighlight = document.getElementById("menuHubBgHighlightImg");
     const clickHandlers = {
-      contracts: () => showComingSoonPopup(),
+      contracts: () => showContractsMenu(),
       chem: () => showChemistryLab(),
       armory: () => showComingSoonPopup(),
       intel: () => showComingSoonPopup(),
@@ -2021,6 +2125,154 @@
     ovBody.appendChild(wrap);
   }
 
+  function showContractsMenu(){
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Contracts";
+    ovSub.textContent="Take on special challenges for extra rewards.";
+    ovBtns.innerHTML="";
+    ovBody.innerHTML="";
+
+    const nowMs = Date.now();
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex; flex-direction:column; gap:14px; max-width:480px;";
+
+    // Completed quest waiting for reward
+    if(questState && questState.completed){
+      const c = questState.completed;
+      const box = document.createElement("div");
+      box.style.cssText = "padding:12px 14px; border-radius:10px; background:rgba(0,0,0,.35); border-left:4px solid #f1c40f; display:flex; flex-direction:column; gap:6px;";
+      const title = document.createElement("div");
+      title.style.cssText = "font-weight:900; color:#f1c40f; font-size:14px;";
+      title.textContent = "Quest complete — collect reward";
+      const desc = document.createElement("div");
+      desc.style.cssText = "font-size:12px; opacity:.9;";
+      desc.textContent = c.label || "Completed contract";
+      const btn = document.createElement("button");
+      btn.className = "menuBtnPrimary";
+      btn.textContent = "Collect reward (1 token)";
+      btn.onclick = () => {
+        tokens += 1;
+        try{ localStorage.setItem("affixloot_tokens", String(tokens)); }catch(e){}
+        questState.completed = null;
+        saveQuestState();
+        beep({freq:660,dur:0.08,type:"triangle",gain:0.08});
+        showContractsMenu();
+      };
+      box.appendChild(title);
+      box.appendChild(desc);
+      box.appendChild(btn);
+      wrap.appendChild(box);
+    }
+
+    // Active quest info
+    if(questState && questState.active){
+      const q = questState.active;
+      const box = document.createElement("div");
+      box.style.cssText = "padding:12px 14px; border-radius:10px; background:rgba(0,0,0,.3); border-left:4px solid #7f8c8d; display:flex; flex-direction:column; gap:6px;";
+      const title = document.createElement("div");
+      title.style.cssText = "font-weight:900; font-size:14px;";
+      title.textContent = q.label || "Active contract";
+      const desc = document.createElement("div");
+      desc.style.cssText = "font-size:12px; opacity:.9;";
+      desc.textContent = q.desc || "";
+      const prog = document.createElement("div");
+      prog.style.cssText = "font-size:12px; opacity:.9; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;";
+      if(q.kind === "kills"){
+        const cur = q.progressKills||0, targ = q.target||0;
+        prog.textContent = `Progress: ${cur}/${targ} kills`;
+      } else if(q.kind === "survive"){
+        const cur = Math.floor((q.progressSeconds||0)/60);
+        const targ = Math.floor((q.targetSeconds||0)/60);
+        prog.textContent = `Progress: ${cur}/${targ} minutes survived (successful runs only)`;
+      } else if(q.kind === "blood"){
+        const cur = q.progressMl||0, targ = q.targetMl||0;
+        prog.textContent = `Progress: ${cur}/${targ} ml blood collected`;
+      }
+      box.appendChild(title);
+      box.appendChild(desc);
+      box.appendChild(prog);
+      wrap.appendChild(box);
+    }
+
+    // New proposals if no active quest
+    if(!questState || !questState.active){
+      const now = nowMs;
+      if(questState && questState.cooldownUntil && now < questState.cooldownUntil){
+        const remainingMs = questState.cooldownUntil - now;
+        const remMin = Math.max(0, Math.floor(remainingMs/60000));
+        const remSec = Math.max(0, Math.floor((remainingMs%60000)/1000));
+        const info = document.createElement("div");
+        info.style.cssText = "padding:10px 12px; border-radius:8px; background:rgba(0,0,0,.3); font-size:12px;";
+        info.textContent = `New contracts available in ${remMin}m ${remSec}s.`;
+        wrap.appendChild(info);
+      } else {
+        if(!questState) questState = { active:null, proposals:[], cooldownUntil:0, completed:null };
+        if(!questState.proposals || !questState.proposals.length){
+          questState.proposals = generateQuestProposals();
+          saveQuestState();
+        }
+        const list = document.createElement("div");
+        list.style.cssText = "display:flex; flex-direction:column; gap:10px;";
+        for(const q of questState.proposals){
+          const row = document.createElement("div");
+          row.style.cssText = "padding:10px 12px; border-radius:10px; background:rgba(0,0,0,.28); border-left:3px solid rgba(255,255,255,.25); display:flex; flex-direction:column; gap:4px;";
+          const title = document.createElement("div");
+          title.style.cssText = "font-weight:800; font-size:13px;";
+          title.textContent = q.label;
+          const desc = document.createElement("div");
+          desc.style.cssText = "font-size:12px; opacity:.9;";
+          desc.textContent = q.desc;
+          const meta = document.createElement("div");
+          meta.style.cssText = "font-size:11px; opacity:.85; display:flex; gap:8px;";
+          meta.textContent = "Reward: 1 token • Difficulty: Easy";
+          const btnRow = document.createElement("div");
+          btnRow.style.cssText = "display:flex; gap:8px; margin-top:4px;";
+          const acceptBtn = document.createElement("button");
+          acceptBtn.className = "menuBtnPrimary";
+          acceptBtn.textContent = "Accept";
+          acceptBtn.onclick = () => {
+            questState.active = cloneQuestDef(q);
+            questState.proposals = [];
+            questState.cooldownUntil = 0;
+            saveQuestState();
+            beep({freq:620,dur:0.06,type:"triangle",gain:0.06});
+            showContractsMenu();
+          };
+          btnRow.appendChild(acceptBtn);
+          row.appendChild(title);
+          row.appendChild(desc);
+          row.appendChild(meta);
+          row.appendChild(btnRow);
+          list.appendChild(row);
+        }
+        if(questState.proposals.length){
+          const skipBtn = document.createElement("button");
+          skipBtn.textContent = "Cancel offers (5 min cooldown)";
+          skipBtn.onclick = () => {
+            const now2 = Date.now();
+            questState.proposals = [];
+            questState.cooldownUntil = now2 + QUEST_COOLDOWN_MS;
+            saveQuestState();
+            showContractsMenu();
+          };
+          skipBtn.style.marginTop = "6px";
+          list.appendChild(skipBtn);
+        }
+        wrap.appendChild(list);
+      }
+    }
+
+    const backBtn = document.createElement("button");
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => showMainMenu();
+    backBtn.style.marginTop = "10px";
+    wrap.appendChild(backBtn);
+
+    ovBody.appendChild(wrap);
+  }
+
   function showCoreSystemsMenu(){
     const overlayCard = document.getElementById("overlayCard");
     if(overlayCard) overlayCard.classList.remove("mainMenuActive");
@@ -2083,14 +2335,16 @@
     infoPanel.className = "coreTreeInfoPanel";
     infoPanel.style.cssText = "position:absolute; max-width:240px; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:8px 12px; font-size:11px; line-height:1.4; box-shadow:0 0 24px rgba(0,0,0,.7); overflow:auto; display:none; pointer-events:none; z-index:5;";
 
-    function buildNodeRow(node, level, maxLevel, unlocked, canUpgrade){
+    function buildNodeRow(node, level, maxLevel, unlocked){
       const row = document.createElement("div");
       row.className = "coreTreeNodeRow";
       row.style.cssText = "display:flex; flex-direction:row; align-items:center; gap:10px; flex-shrink:0; transform:translateX(-60px);";
       const costCell = document.createElement("div");
       costCell.className = "coreTreeCostCell";
       costCell.style.cssText = "width:72px; text-align:right; font-size:9px; font-weight:800; color:rgba(200,220,255,.9); min-width:72px; white-space:nowrap;";
-      costCell.textContent = canUpgrade ? ("COST: " + String(node.cost)) : "";
+      const nextCost = getCoreNodeCost(node, level, maxLevel);
+      const canUpgrade = unlocked && level < maxLevel && tokens >= nextCost && nextCost > 0;
+      costCell.textContent = (level < maxLevel && nextCost > 0) ? ("COST: " + String(nextCost)) : "";
       row.appendChild(costCell);
       const balloonWrap = document.createElement("div");
       balloonWrap.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:4px;";
@@ -2135,7 +2389,9 @@
         if(!canUpgrade) confirmBtn.style.opacity = "0.6";
         confirmBtn.onclick = () => {
           if(!canUpgrade) return;
-          tokens -= node.cost;
+          const costNow = getCoreNodeCost(node, level, maxLevel);
+          if(costNow <= 0 || tokens < costNow) return;
+          tokens -= costNow;
           skillLevels[node.id] = (skillLevels[node.id]||0) + 1;
           localStorage.setItem("affixloot_tokens", String(tokens));
           localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
@@ -2306,8 +2562,7 @@
         const ml = topNode.maxLevel != null ? topNode.maxLevel : SKILL_TREE_MAX_LEVEL;
         const req = Array.isArray(topNode.requires)?topNode.requires:[];
         let un = true; for(const r of req) if((skillLevels[r]||0)<=0){ un=false; break; }
-        const can = un && l < ml && tokens >= topNode.cost;
-        topRow.appendChild(buildNodeRow(topNode, l, ml, un, can));
+        topRow.appendChild(buildNodeRow(topNode, l, ml, un));
       }
       const midRow = document.createElement("div");
       midRow.style.cssText = "display:flex; justify-content:space-between; align-items:flex-start; flex:1; min-height:0; position:relative; z-index:1; padding:0; transform:translateX(19px);";
@@ -2322,14 +2577,14 @@
         const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
         const requires = Array.isArray(node.requires)?node.requires:[];
         let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
-        leftCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+        leftCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
       }
       for(const node of rightNodes){
         const level = Math.min(skillLevels[node.id]||0, node.maxLevel||SKILL_TREE_MAX_LEVEL);
         const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
         const requires = Array.isArray(node.requires)?node.requires:[];
         let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
-        rightCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+        rightCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
       }
       midRow.appendChild(leftCol);
       midRow.appendChild(midSpacer);
@@ -2339,7 +2594,7 @@
       if(baseNode){
         const level = Math.min(skillLevels[baseNode.id]||0, baseNode.maxLevel||SKILL_TREE_MAX_LEVEL);
         const maxLevel = baseNode.maxLevel != null ? baseNode.maxLevel : SKILL_TREE_MAX_LEVEL;
-        bottomRow.appendChild(buildNodeRow(baseNode, level, maxLevel, true, level < maxLevel && tokens >= baseNode.cost));
+        bottomRow.appendChild(buildNodeRow(baseNode, level, maxLevel, true));
       }
       branchWrap.appendChild(topRow);
       branchWrap.appendChild(midRow);
@@ -2380,7 +2635,7 @@
         const requires = Array.isArray(node.requires) ? node.requires : [];
         let unlocked = true;
         for(const reqId of requires){ if((skillLevels[reqId]||0) <= 0){ unlocked = false; break; } }
-        nodesCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, unlocked && level < maxLevel && tokens >= node.cost));
+        nodesCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
       }
       nodesWrap.appendChild(nodesCol);
       col.appendChild(nodesWrap);
@@ -2701,8 +2956,6 @@
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState(true);
-    // TODO TEST: remove after testing today – force a starting weapon every run
-    equipped.weapon = makeItem("weapon", "legendary");
     tokensAtRunStart = tokens;
     recomputeBuild();
     renderEquipMini();
@@ -2768,6 +3021,40 @@
       const atkPerSec = 1 / Math.max(0.0001, player.atkRate);
       atkTag.textContent = `ATK ${atkPerSec.toFixed(2)}/s`;
     }
+  }
+
+  function updateQuestAfterSuccessfulRun(summary, elapsedS){
+    if(!questState || !questState.active) return;
+    const q = questState.active;
+    if(q.kind === "kills"){
+      q.progressKills = (q.progressKills||0) + (kills||0);
+      if(q.progressKills >= (q.target||0)){
+        questState.completed = q;
+        questState.active = null;
+        showSimpleToast("✓ Quest complete! Return to base.");
+      }
+    } else if(q.kind === "survive"){
+      q.progressSeconds = (q.progressSeconds||0) + (elapsedS||0);
+      if(q.progressSeconds >= (q.targetSeconds||0)){
+        questState.completed = q;
+        questState.active = null;
+        showSimpleToast("✓ Quest complete! Return to base.");
+      }
+    } else if(q.kind === "blood"){
+      let gainedMl = 0;
+      if(summary && summary.runBloodMl){
+        for(const id in summary.runBloodMl){
+          gainedMl += summary.runBloodMl[id]|0;
+        }
+      }
+      q.progressMl = (q.progressMl||0) + gainedMl;
+      if(q.progressMl >= (q.targetMl||0)){
+        questState.completed = q;
+        questState.active = null;
+        showSimpleToast("✓ Quest complete! Return to base.");
+      }
+    }
+    saveQuestState();
   }
 
   // ========= Main loop =========
@@ -2867,6 +3154,7 @@
       extractionTransition.t += dt;
       if(extractionTransition.t >= extractionTransition.duration){
         const savedSummary = extractionSummaryData;
+        updateQuestAfterSuccessfulRun(savedSummary, elapsed);
         for(const id in runBloodMl){ baseBloodMl[id] = (baseBloodMl[id]||0) + runBloodMl[id]; }
         if(Object.keys(runBloodMl).length) localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
         extractionTransition = null;
@@ -3119,12 +3407,16 @@
 
     // enemies move + collision
     for(const e of enemies){
-      const dx=player.x-e.x, dy=player.y-e.y;
-      const d=Math.hypot(dx,dy)||1;
-      let sp=e.sp;
-      if(aura>0 && (dx*dx+dy*dy)<auraR2) sp *= (1-aura);
-      e.x += (dx/d)*sp*dt;
-      e.y += (dy/d)*sp*dt;
+      if(!e || typeof e.x !== "number" || typeof e.y !== "number") continue;
+      // Move enemy toward player (with slow aura)
+      const dx0 = player.x - e.x, dy0 = player.y - e.y;
+      const d0 = Math.hypot(dx0,dy0) || 1;
+      let sp = e.sp;
+      if(aura>0 && (dx0*dx0+dy0*dy0)<auraR2) sp *= (1-aura);
+      e.x += (dx0/d0)*sp*dt;
+      e.y += (dy0/d0)*sp*dt;
+
+      // Push enemies out of static obstacles
       let eOut = pushOutOfFountain(e.x, e.y, e.r);
       e.x = eOut.x; e.y = eOut.y;
       eOut = pushOutOfManholes(e.x, e.y, e.r);
@@ -3133,13 +3425,24 @@
       e.x = eOut.x; e.y = eOut.y;
       if(e.hitFlash>0) e.hitFlash-=dt;
 
-      const rr=(player.r+e.r);
-      if(dx*dx+dy*dy < rr*rr){
+      // Player contact damage + separation: enemies stay at least MIN_GAP from player center (can touch and deal damage, but not overlap sprite)
+      const minGap = 22 * DPR;
+      const rr = (player.r + e.r + minGap);
+      const dx = player.x - e.x, dy = player.y - e.y;
+      const dist2 = dx*dx + dy*dy;
+      if(dist2 < rr*rr){
         const contact = e.contactDmg != null ? e.contactDmg : (e.boss?18: e.elite?12:7);
         takeDamage(contact);
         if(player.thorns>0){
           const th=Math.round((e.boss?18:e.elite?10:6)*player.thorns);
           if(th>0) hitEnemy(e, th);
+        }
+        const d = Math.sqrt(dist2) || 1;
+        const push = rr - d;
+        if(push > 0){
+          const nx = dx / d, ny = dy / d;
+          e.x -= nx * push;
+          e.y -= ny * push;
         }
       }
     }
@@ -3747,6 +4050,7 @@
     if(extractionCountdown!=null && extractionCountdown>0){
       const sec = Math.ceil(extractionCountdown);
       ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.font = `bold ${Math.min(72, W/8)*DPR}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -3840,12 +4144,24 @@
   function drawPlayer(){
     const t=now()*0.001;
 
-    if(extractionLiftoff && extractionCharImg && extractionCharImg.complete && extractionCharImg.naturalWidth>0){
+    if(extractionLiftoff){
       const size = player.r * 16;
       const w = size, h = size;
+      const extractionImg = playerSprites.extraction;
       ctx.save();
       ctx.globalAlpha = 1;
-      ctx.drawImage(extractionCharImg, player.x - w/2, player.y - h/2, w, h);
+      if(extractionImg && extractionImg.complete && extractionImg.naturalWidth>0){
+        ctx.drawImage(extractionImg, player.x - w/2, player.y - h/2, w, h);
+      } else {
+        const bodyGrad = ctx.createRadialGradient(player.x - player.r*0.4, player.y - player.r*0.5, 2, player.x, player.y, player.r*1.6);
+        bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
+        bodyGrad.addColorStop(0.5, "rgba(200,220,255,0.9)");
+        bodyGrad.addColorStop(1, "rgba(80,120,180,0.9)");
+        ctx.fillStyle = bodyGrad;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+        ctx.fill();
+      }
       ctx.restore();
       return;
     }
