@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.003.7";
+  const GAME_VERSION = "1.003.8";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -2718,6 +2718,11 @@
     stopMenuMusic(); // ensure menu music is off before starting run track
     if(musicVol>0) runMusic.play().catch(()=>{});
 
+    // Fountain decor: randomize position each run; currently always duck for easy mode.
+    fountainDecorKind = "duck";
+    fountainDecorAngle = rand(0, Math.PI * 2);
+    fountainDecorRadiusFrac = 0.32 + rand(0, 0.16);
+
     if(ENDLESS_RUN){
       for(let i=0;i<28;i++) spawnEnemy(false);
     } else if(TEST_SINGLE_MOB_MODE){
@@ -3344,40 +3349,62 @@
     ctx.closePath();
   }
 
-  // Mall 1st floor: 4x map size, tiled pattern in world space
+  // Mall 1st floor: tiled floor with variation, grout, subtle gradients, rare cracks
   function drawMallFloorPlaceholder(){
     const tile = 48 * DPR;
+    const gap = Math.max(1, 1 * DPR);
     const w = Math.ceil(mapW / tile) + 1;
     const h = Math.ceil(mapH / tile) + 1;
     ctx.save();
-    ctx.fillStyle = "#3d362e";
+    // Deterministic hash for (i,j) – same run = same look
+    function tileHash(i, j){ let v = (i * 31 + j) * 2654435761; return (v >>> 0) % 100000; }
+    const shades = ["#4a4439", "#423b32", "#3d362e", "#353028"];
+    // Base = grout (dark lines between tiles)
+    ctx.fillStyle = "#2a2520";
     ctx.fillRect(0, 0, mapW, mapH);
     for (let i = 0; i < w; i++) {
       for (let j = 0; j < h; j++) {
-        ctx.fillStyle = (i + j) % 2 === 0 ? "#4a4439" : "#353028";
-        ctx.fillRect(i * tile, j * tile, tile + 1, tile + 1);
+        const x = i * tile + gap;
+        const y = j * tile + gap;
+        const size = tile - gap * 2;
+        const h = tileHash(i, j);
+        const baseColor = shades[h % shades.length];
+        const darkColor = shades[(h + 2) % shades.length];
+        const g = ctx.createRadialGradient(x + size/2, y + size/2, 0, x + size/2, y + size/2, size * 0.6);
+        g.addColorStop(0, baseColor);
+        g.addColorStop(1, darkColor);
+        ctx.fillStyle = g;
+        ctx.fillRect(x, y, size, size);
+        // Rare cracks (~8% of tiles), spread so similar ones are far apart
+        if ((i * 7 + j * 11) % 13 === 2) {
+          ctx.strokeStyle = "rgba(22,20,16,0.75)";
+          ctx.lineWidth = 1.2 * DPR;
+          const cx = x + size/2, cy = y + size/2;
+          const angle = (h % 360) * Math.PI / 180;
+          const len = size * (0.12 + (h % 25) / 150);
+          ctx.beginPath();
+          ctx.moveTo(cx - Math.cos(angle) * len, cy - Math.sin(angle) * len);
+          ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+          ctx.stroke();
+          if (h % 3 === 0) {
+            const a2 = angle + 0.7;
+            const len2 = size * 0.1;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(a2) * len2, cy + Math.sin(a2) * len2);
+            ctx.stroke();
+          }
+        }
       }
-    }
-    ctx.globalAlpha = 0.12;
-    ctx.strokeStyle = "rgba(255,255,255,0.15)";
-    ctx.lineWidth = 1 * DPR;
-    for (let i = 0; i <= w; i++) {
-      ctx.beginPath();
-      ctx.moveTo(i * tile, 0);
-      ctx.lineTo(i * tile, mapH);
-      ctx.stroke();
-    }
-    for (let j = 0; j <= h; j++) {
-      ctx.beginPath();
-      ctx.moveTo(0, j * tile);
-      ctx.lineTo(mapW, j * tile);
-      ctx.stroke();
     }
     ctx.restore();
   }
 
   // Fountain collision: same radius as drawn pool (solid obstacle)
   const FOUNTAIN_R = 80 * 1.4 * 1;  // *DPR applied when used
+  let fountainDecorKind = "duck";   // "duck" for easy; "skull" reserved for hard mode later
+  let fountainDecorAngle = 0;
+  let fountainDecorRadiusFrac = 0.4;
   function getFountainCenter(){ return { cx: mapW / 2, cy: mapH / 2 }; }
   function pushOutOfFountain(x, y, entityR){
     const { cx, cy } = getFountainCenter();
@@ -3431,41 +3458,95 @@
 
   function drawFountain(){
     const cx = mapW / 2, cy = mapH / 2;
+    const t = now() * 0.001;
     const baseR = 80 * DPR;
     const poolR = baseR * 1.4;
+    const ringW = 14 * DPR;
+    const waterR = poolR - ringW;
+    const coreR = waterR * 0.22;
     ctx.save();
-    // Pool – solid (opaque)
-    ctx.fillStyle = "#2c4a5e";
-    ctx.strokeStyle = "#3d6b85";
-    ctx.lineWidth = 3 * DPR;
+    // 1) Outer concrete ring (betongring)
+    ctx.fillStyle = "#5c554a";
     ctx.beginPath();
     ctx.arc(cx, cy, poolR, 0, Math.PI * 2);
+    ctx.arc(cx, cy, waterR, 0, Math.PI * 2, true);
     ctx.fill();
+    ctx.strokeStyle = "#7a7266";
+    ctx.lineWidth = 2 * DPR;
     ctx.stroke();
-    // Base ring
-    ctx.fillStyle = "#5a5248";
-    ctx.strokeStyle = "#8a7d6a";
     ctx.beginPath();
-    ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(cx, cy, poolR, 0, Math.PI * 2);
     ctx.stroke();
-    // Center pillar
-    const pillarR = baseR * 0.35;
-    ctx.fillStyle = "#6b6358";
     ctx.beginPath();
-    ctx.arc(cx, cy, pillarR, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(cx, cy, waterR, 0, Math.PI * 2);
+    ctx.strokeStyle = "#4a4438";
     ctx.stroke();
-    // Water on top – solid
-    ctx.fillStyle = "#5b9bb5";
+    // 2) Water – gradient + subtle shimmer (slight ellipse pulse)
+    const wave = 1 + 0.018 * Math.sin(t * 2.2);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, wave);
+    ctx.translate(-cx, -cy);
+    const waterG = ctx.createRadialGradient(cx, cy, 0, cx, cy, waterR);
+    waterG.addColorStop(0, "#5a9ab5");
+    waterG.addColorStop(0.5, "#3d6b85");
+    waterG.addColorStop(0.85, "#2c4a5e");
+    waterG.addColorStop(1, "#243a4a");
+    ctx.fillStyle = waterG;
     ctx.beginPath();
-    ctx.arc(cx, cy - 8 * DPR, pillarR * 0.7, 0, Math.PI * 2);
+    ctx.arc(cx, cy, waterR, 0, Math.PI * 2);
     ctx.fill();
-    // Inner water – solid, slight shimmer tint
-    ctx.fillStyle = "#7ab8d4";
+    ctx.restore();
+    ctx.strokeStyle = "rgba(90,160,200,0.35)";
+    ctx.lineWidth = 1.5 * DPR;
     ctx.beginPath();
-    ctx.arc(cx, cy, poolR * 0.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(cx, cy, waterR, 0, Math.PI * 2);
+    ctx.stroke();
+    // 3) Wavy water surface line + floating decor (duck for easy; skull for hard later)
+    const decorAngle = fountainDecorAngle || 0;
+    const decorR = waterR * (fountainDecorRadiusFrac || 0.4);
+    const decorX = cx + Math.cos(decorAngle) * decorR;
+    const baseDecorY = cy + Math.sin(decorAngle) * (waterR * 0.25);
+    const isDuck = fountainDecorKind === "duck";
+    const bobAmp = (isDuck ? 1.2 : 2.5) * DPR;
+    const decorBob = bobAmp * Math.sin(t * (isDuck ? 1.2 : 1.6));
+    const decorY = baseDecorY + decorBob;
+    const lineHalfW = (isDuck ? 22 : 18) * DPR;
+    const waveAmp = 2.2 * DPR;
+    const waveFreq = 0.12;
+    const waveY = (x) => baseDecorY + waveAmp * Math.sin((x - decorX) * waveFreq);
+    ctx.save();
+    ctx.strokeStyle = "rgba(25,45,65,0.85)";
+    ctx.lineWidth = 2.2 * DPR;
+    ctx.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const x = decorX - lineHalfW + (i / 24) * (2 * lineHalfW);
+      const y = waveY(x);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    const topY = baseDecorY - 20 * DPR;
+    ctx.moveTo(decorX - lineHalfW, topY);
+    ctx.lineTo(decorX + lineHalfW, topY);
+    ctx.lineTo(decorX + lineHalfW, waveY(decorX + lineHalfW));
+    for (let i = 23; i >= 0; i--) {
+      const x = decorX - lineHalfW + (i / 24) * (2 * lineHalfW);
+      ctx.lineTo(x, waveY(x));
+    }
+    ctx.closePath();
+    ctx.clip();
+    ctx.save();
+    ctx.translate(decorX, decorY);
+    if(!isDuck) ctx.rotate(-Math.PI * 0.25);
+    ctx.font = `${22 * DPR}px serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.fillText(isDuck ? "🦆" : "💀", 0, 0);
+    ctx.restore();
+    ctx.restore();
     ctx.restore();
   }
 
