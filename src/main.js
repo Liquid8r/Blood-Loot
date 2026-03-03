@@ -458,6 +458,8 @@
     dashIy:0,
     dashPending: false,
     lastDir: "front",
+    lastShotUx: 0,
+    lastShotUy: 0,
 
     xp:0,
     level:1,
@@ -1456,7 +1458,10 @@
   function shootAt(target){
     const dx=target.x-player.x, dy=target.y-player.y;
     const d=Math.hypot(dx,dy)||1;
-    const ux=dx/d, uy=dy/d;
+    shootInDirection(dx/d, dy/d);
+  }
+
+  function shootInDirection(ux, uy){
     const sp=BASE.bulletSpeed*DPR;
     bullets.push({
       x: player.x + ux*(player.r+6*DPR),
@@ -3044,11 +3049,11 @@
     }
     if(player.invuln>0) player.invuln -= dt;
 
-    // movement
-    const up=keys.has("w")||keys.has("arrowup");
-    const down=keys.has("s")||keys.has("arrowdown");
-    const left=keys.has("a")||keys.has("arrowleft");
-    const right=keys.has("d")||keys.has("arrowright");
+    // movement (WASD only; arrows used for shooting)
+    const up=keys.has("w");
+    const down=keys.has("s");
+    const left=keys.has("a");
+    const right=keys.has("d");
     let ix=(right?1:0)-(left?1:0);
     let iy=(down?1:0)-(up?1:0);
     const il=Math.hypot(ix,iy)||1;
@@ -3093,7 +3098,14 @@
     out = pushOutOfMallProps(player.x, player.y, player.r);
     player.x = out.x; player.y = out.y;
     const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
-    if (plSpeed > 0.5*DPR) player.lastDir = (player.vy || 0) < 0 ? "back" : "front";
+    if (plSpeed > 0.5*DPR) {
+      const vy = player.vy || 0;
+      let dir = vy < 0 ? "back" : "front";
+      const aimUp = keys.has("arrowup"), aimDown = keys.has("arrowdown");
+      if (vy > 0 && aimUp && !aimDown) dir = "back";
+      else if (vy < 0 && aimDown && !aimUp) dir = "front";
+      player.lastDir = dir;
+    }
 
     // slow aura
     const aura=player.slowAura;
@@ -3127,11 +3139,18 @@
       }
     }
 
-    // shooting
+    // shooting (arrow keys = 8 directions; no autofire)
     atkCD -= dt;
-    if(atkCD<=0 && enemies.length){
-      const t = nearestEnemy(player.x,player.y);
-      if(t){ shootAt(t); atkCD = player.atkRate; }
+    const arrowUp=keys.has("arrowup"), arrowDown=keys.has("arrowdown");
+    const arrowLeft=keys.has("arrowleft"), arrowRight=keys.has("arrowright");
+    const ax=(arrowRight?1:0)-(arrowLeft?1:0), ay=(arrowDown?1:0)-(arrowUp?1:0);
+    if(atkCD<=0 && (ax!==0 || ay!==0)){
+      const len=Math.hypot(ax,ay)||1;
+      const ux = ax/len, uy = ay/len;
+      shootInDirection(ux, uy);
+      player.lastShotUx = ux;
+      player.lastShotUy = uy;
+      atkCD = player.atkRate;
     }
 
     // bullets
@@ -3818,7 +3837,15 @@
         }
       }
       if (!img) {
-        const dir = vy < 0 ? "back" : "front";
+        let dir;
+        if (standing) {
+          dir = lastD;
+        } else {
+          dir = vy < 0 ? "back" : "front";
+          const aimUp = keys.has("arrowup"), aimDown = keys.has("arrowdown");
+          if (vy > 0 && aimUp && !aimDown) dir = "back";
+          else if (vy < 0 && aimDown && !aimUp) dir = "front";
+        }
         const frames = playerSprites[dir];
         const frameIndex = Math.min(Math.floor((t * 4 + (player.animOffset || 0)) % 2), frames.length - 1);
         img = frames[frameIndex];
