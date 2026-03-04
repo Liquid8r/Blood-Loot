@@ -717,6 +717,7 @@
   let tutorialCountdown = null;
   let tutorialCountdownEndT = 0;
   let tutorialBubbleEl = null;
+  let level11ControlsWrap = null;
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -1139,6 +1140,42 @@
         if(wrap.parentNode) wrap.remove();
         if(tutorialOverlay){ setTutorialSeen(tutorialOverlay.id); tutorialOverlay = null; }
         tutorialBubbleEl = null;
+        tutorialCountdown = 3;
+        tutorialCountdownEndT = now() + 1;
+      };
+    }
+  }
+
+  function showLevel11ControlsOverlay(){
+    if(level11ControlsWrap && level11ControlsWrap.parentNode) level11ControlsWrap.remove();
+    paused = true;
+    const wrap = document.createElement("div");
+    wrap.id = "level11ControlsWrap";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);pointer-events:auto;";
+    const bubble = document.createElement("div");
+    bubble.style.cssText = "background:#111;border:3px solid #fff;color:#fff;padding:28px 32px;border-radius:14px;max-width:min(520px,92vw);box-shadow:0 12px 48px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',ui-sans-serif,sans-serif;";
+    bubble.innerHTML = `
+      <p style="margin:0 0 20px 0;font-size:17px;line-height:1.5;font-family:inherit;">Move with <strong>WASD</strong>. Shoot with the <strong>arrow keys</strong>.</p>
+      <button type="button" id="level11ControlsGotIt" style="display:block;margin:0 auto;padding:12px 28px;font-size:15px;font-weight:800;background:#333;color:#fff;border:2px solid #fff;border-radius:8px;cursor:pointer;font-family:inherit;letter-spacing:.6px;text-transform:uppercase;">Got it! (E)</button>
+    `;
+    wrap.appendChild(bubble);
+    level11ControlsWrap = wrap;
+    document.body.appendChild(wrap);
+    const btn = wrap.querySelector("#level11ControlsGotIt");
+    if(btn){
+      const onKey = (ev) => {
+        const k = ev.key || "";
+        if(k === "e" || k === "E"){
+          if(ev.repeat) return;
+          ev.preventDefault();
+          btn.click();
+        }
+      };
+      addEventListener("keydown", onKey);
+      btn.onclick = () => {
+        removeEventListener("keydown", onKey);
+        if(wrap.parentNode) wrap.remove();
+        level11ControlsWrap = null;
         tutorialCountdown = 3;
         tutorialCountdownEndT = now() + 1;
       };
@@ -3046,6 +3083,8 @@
     tutorialCountdown=null;
     if(tutorialBubbleEl && tutorialBubbleEl.parentNode) tutorialBubbleEl.remove();
     tutorialBubbleEl=null;
+    if(level11ControlsWrap && level11ControlsWrap.parentNode) level11ControlsWrap.remove();
+    level11ControlsWrap=null;
     runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
     runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
     bloodPools = [];
@@ -3334,6 +3373,11 @@
     overlay.classList.add("hidden");
     if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     running=true; paused=false; inCompare=false;
+
+    if(currentLevelConfig && currentLevelConfig.id === "1-1"){
+      paused = true;
+      showLevel11ControlsOverlay();
+    }
 
     const runTrack = 1 + Math.floor(Math.random() * 5);
     runMusic = new Audio(`assets/audio/${runTrack}.mp3`);
