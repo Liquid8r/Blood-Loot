@@ -45,6 +45,7 @@
   const atkTag = document.getElementById("atkTag");
   const dmgWrap = document.getElementById("dmgWrap");
   const atkWrap = document.getElementById("atkWrap");
+  const hudQuestStatus = document.getElementById("hudQuestStatus");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
   const GAME_VERSION = "1.004.0";
@@ -1593,15 +1594,23 @@
     }
     sp *= DPR;
     if(currentLevelConfig && currentLevelConfig.id === "1-1") sp *= 0.8;  // 1-1: skittering mice 20% slower
-    const contactDmg = Math.round((isElite ? 10 : 8) * scaleDmg);
+    let contactDmg = Math.round((isElite ? 10 : 8) * scaleDmg);
     const hpScale = (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1) * (currentLevelConfig && currentLevelConfig.id === "1-1" ? 0.8 : 1);
+    let finalHp = (hp*(isElite?1.15:1)) * hpScale;
+    let finalSp = sp;
+    const postBoss11 = currentLevelConfig && currentLevelConfig.id === "1-1" && level11BossPhase === "spawned";
+    if(postBoss11){
+      finalHp *= 0.95;
+      contactDmg = Math.round(contactDmg * 0.95);
+      finalSp *= 0.95;
+    }
 
     enemies.push({
       kind: "skitteringMouse",
       x,y, r: baseR*DPR,
-      hp: (hp*(isElite?1.15:1)) * hpScale,
-      maxHP: (hp*(isElite?1.15:1)) * hpScale,
-      sp,
+      hp: finalHp,
+      maxHP: finalHp,
+      sp: finalSp,
       elite: isElite,
       boss: false,
       icon: "🐭",
@@ -3060,32 +3069,58 @@
     tokenBarProgress = 0;
     tokenPops = [];
 
-    mapW = 4 * W;
-    mapH = 4 * H;
-    const margin = 80 * DPR;
+    mapW = 2 * W;
+    mapH = 2 * H;
+    const mapScale = 0.5;
+    const margin = 80 * DPR * mapScale;
     const manholeR = 32 * DPR;
     const fountainCx = mapW / 2, fountainCy = mapH / 2;
-    const avoidR = (80 * 1.4 * DPR) + manholeR + 40 * DPR;
+    const avoidR = ((80 * 1.4 * DPR) + manholeR + 40 * DPR) * mapScale;
+    const MIN_MANHOLE_SEP = 70 * DPR;
     manholes = [];
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 2; col++) {
         const zoneW = mapW / 2, zoneH = mapH / 3;
-        let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
-        let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
-        const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
-        if (toFountain < avoidR) {
-          const angle = Math.atan2(y - fountainCy, x - fountainCx);
-          x = fountainCx + Math.cos(angle) * avoidR;
-          y = fountainCy + Math.sin(angle) * avoidR;
+        let placed = false;
+        for (let attempt = 0; attempt < 50 && !placed; attempt++) {
+          let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
+          let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
+          const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
+          if (toFountain < avoidR) {
+            const angle = Math.atan2(y - fountainCy, x - fountainCx);
+            x = fountainCx + Math.cos(angle) * avoidR;
+            y = fountainCy + Math.sin(angle) * avoidR;
+          }
+          let tooClose = false;
+          for (const m of manholes) {
+            if (Math.hypot(x - m.x, y - m.y) < m.r + MIN_MANHOLE_SEP) {
+              tooClose = true;
+              break;
+            }
+          }
+          if (!tooClose) {
+            manholes.push({ x, y, r: manholeR });
+            placed = true;
+          }
         }
-        manholes.push({ x, y, r: manholeR });
+        if (!placed) {
+          let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
+          let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
+          const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
+          if (toFountain < avoidR) {
+            const angle = Math.atan2(y - fountainCy, x - fountainCx);
+            x = fountainCx + Math.cos(angle) * avoidR;
+            y = fountainCy + Math.sin(angle) * avoidR;
+          }
+          manholes.push({ x, y, r: manholeR });
+        }
       }
     }
-    const doorInset = 40 * DPR;
-    // Small mall buildings: 8×5 floor tiles (tiled floor is 48×48px before DPR).
+    const doorInset = 40 * DPR * mapScale;
+    // Mall buildings: size scaled with map (was 8×5 tiles on 4× viewport; now 6×4 on 2× viewport for same relative spread).
     const TILE = 48 * DPR;
-    const SHOP_W = 8 * TILE;
-    const SHOP_H = 5 * TILE;
+    const SHOP_W = 6 * TILE;
+    const SHOP_H = 4 * TILE;
     const shopTypes = [
       { id: "Hot Dog Stand",  w: SHOP_W, h: SHOP_H, fill: "#8B4513", stroke: "#5D2E0C", sign: "🌭" },
       { id: "Clothing Store", w: SHOP_W, h: SHOP_H, fill: "#4A6FA5", stroke: "#2E4563", sign: "👕" },
@@ -3094,45 +3129,80 @@
       { id: "Flower Shop",    w: SHOP_W, h: SHOP_H, fill: "#228B22", stroke: "#145214", sign: "🌸" },
       { id: "Trash",          w: SHOP_W, h: SHOP_H, fill: "#3d3d3d", stroke: "#252525", sign: "🗑️" },
     ];
-    mallProps = [];
-    const zoneW = mapW / 2, zoneH = mapH / 3;
-    const pad = 55 * DPR;
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 2; col++) {
-        // Place top-left of an 8×5 tile shop somewhere inside this zone, avoiding fountain area.
-        const T = shopTypes[ mallProps.length % shopTypes.length ];
-        const maxXSpan = Math.max(10, zoneW - T.w - 2*pad);
-        const maxYSpan = Math.max(10, zoneH - T.h - 2*pad);
-        let x = pad + rand(0, maxXSpan) + col * zoneW;
-        let y = pad + rand(0, maxYSpan) + row * zoneH;
-        const cx = x, cy = y;
-        if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR) {
-          const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
-          x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR);
-          y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR);
-        }
-        mallProps.push({ kind: "shop", type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
-      }
-    }
-
-    // Helper: axis-aligned rectangle overlap
     function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh){
       return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
     }
+    function rectOverlapsManhole(rx, ry, rw, rh, clearance) {
+      const c = clearance != null ? clearance : 24 * DPR;
+      for (const m of manholes) {
+        const closestX = Math.max(rx, Math.min(m.x, rx + rw));
+        const closestY = Math.max(ry, Math.min(m.y, ry + rh));
+        const d = Math.hypot(m.x - closestX, m.y - closestY);
+        if (d < m.r + c) return true;
+      }
+      return false;
+    }
+    function rectOverlapsMallProps(rx, ry, rw, rh, props) {
+      for (const p of props) {
+        if (rectsOverlap(rx, ry, rw, rh, p.x, p.y, p.w, p.h)) return true;
+      }
+      return false;
+    }
+
+    mallProps = [];
+    const zoneW = mapW / 2, zoneH = mapH / 3;
+    const pad = 55 * DPR * mapScale;
+    const SHOP_MANHOLE_CLEAR = 28 * DPR;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 2; col++) {
+        const T = shopTypes[ mallProps.length % shopTypes.length ];
+        const maxXSpan = Math.max(10, zoneW - T.w - 2*pad);
+        const maxYSpan = Math.max(10, zoneH - T.h - 2*pad);
+        let placed = false;
+        for (let attempt = 0; attempt < 40 && !placed; attempt++) {
+          let x = pad + rand(0, maxXSpan) + col * zoneW;
+          let y = pad + rand(0, maxYSpan) + row * zoneH;
+          const cx = x + T.w/2, cy = y + T.h/2;
+          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR*mapScale) {
+            const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
+            x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR*mapScale) - T.w/2;
+            y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR*mapScale) - T.h/2;
+          }
+          if (x < pad || y < pad || x + T.w > mapW - pad || y + T.h > mapH - pad) continue;
+          if (rectOverlapsManhole(x, y, T.w, T.h, SHOP_MANHOLE_CLEAR)) continue;
+          if (rectOverlapsMallProps(x, y, T.w, T.h, mallProps)) continue;
+          mallProps.push({ kind: "shop", type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
+          placed = true;
+        }
+        if (!placed) {
+          let x = pad + rand(0, maxXSpan) + col * zoneW;
+          let y = pad + rand(0, maxYSpan) + row * zoneH;
+          const cx = x + T.w/2, cy = y + T.h/2;
+          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR*mapScale) {
+            const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
+            x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR*mapScale) - T.w/2;
+            y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR*mapScale) - T.h/2;
+          }
+          mallProps.push({ kind: "shop", type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
+        }
+      }
+    }
+
     // Helper: check if proposed rect overlaps any existing mallProp or is too close to a manhole or fountain
     function canPlaceRect(x, y, w, h){
       const cx = x + w/2;
       const cy = y + h/2;
       // Keep inside map
-      const marginInner = 40 * DPR;
+      const marginInner = 40 * DPR * mapScale;
       if(x < marginInner || y < marginInner || x + w > mapW - marginInner || y + h > mapH - marginInner) return false;
       // Avoid fountain
       const dF = Math.hypot(cx - fountainCx, cy - fountainCy);
       if(dF < avoidR + Math.max(w,h)*0.6) return false;
-      // Avoid manholes
+      // Avoid manholes (with clear gap so nothing overlaps)
+      const manholeClear = Math.max(w,h)*0.6 + 25*DPR;
       for(const m of manholes){
         const d = Math.hypot(cx - m.x, cy - m.y);
-        if(d < m.r + Math.max(w,h)*0.6) return false;
+        if(d < m.r + manholeClear) return false;
       }
       // Avoid other props
       for(const p of mallProps){
@@ -3141,15 +3211,22 @@
       return true;
     }
 
-    // Additional scenery: benches with trash (2×3 tiles), small flower pots (1×1), large plants (2×2)
+    // Additional scenery: benches (2×3 tiles), flower pots (1×1), large plants (2×2) – sizes preserved for readability
     const BENCH_W = 2 * TILE, BENCH_H = 3 * TILE;
     const POT_W = 1 * TILE, POT_H = 1 * TILE;
     const PLANT_W = 2 * TILE, PLANT_H = 2 * TILE;
 
+    const SCENERY_GRID_COLS = 3, SCENERY_GRID_ROWS = 2;
+    const zoneWSc = mapW / SCENERY_GRID_COLS, zoneHSc = mapH / SCENERY_GRID_ROWS;
     function placeScenery(kind, count){
       const maxAttempts = 40;
+      const edge = 60 * DPR * mapScale;
       for(let i=0;i<count;i++){
         let placed = false;
+        const cell = i % (SCENERY_GRID_COLS * SCENERY_GRID_ROWS);
+        const col = cell % SCENERY_GRID_COLS, row = Math.floor(cell / SCENERY_GRID_COLS);
+        const cellMinX = col * zoneWSc + edge, cellMaxX = (col + 1) * zoneWSc - edge;
+        const cellMinY = row * zoneHSc + edge, cellMaxY = (row + 1) * zoneHSc - edge;
         for(let attempt=0; attempt<maxAttempts && !placed; attempt++){
           let w, h;
           if(kind === "bench"){
@@ -3159,8 +3236,8 @@
           } else {
             w = PLANT_W; h = PLANT_H;
           }
-          const x = rand(60*DPR, mapW - w - 60*DPR);
-          const y = rand(60*DPR, mapH - h - 60*DPR);
+          const x = rand(cellMinX, Math.max(cellMinX, cellMaxX - w));
+          const y = rand(cellMinY, Math.max(cellMinY, cellMaxY - h));
           if(!canPlaceRect(x,y,w,h)) continue;
           if(kind === "bench"){
             mallProps.push({ kind:"bench", type:"Bench", x, y, w, h });
@@ -3182,16 +3259,16 @@
       }
     }
 
-    placeScenery("bench", 5);
-    placeScenery("flowerPotSmall", 8);
-    placeScenery("plantLarge", 4);
+    placeScenery("bench", 3);
+    placeScenery("flowerPotSmall", 5);
+    placeScenery("plantLarge", 3);
 
     // Level 1-1: pre-place clustered mice and corpses around each manhole
     if(level11Active){
       setupLevel11Zones();
     }
-    const poolR = 80 * 1.4 * DPR;
-    const spawnDist = poolR + player.r + 28 * DPR;
+    const poolR = 80 * 1.4 * DPR * mapScale;
+    const spawnDist = poolR + player.r + 28 * DPR * mapScale;
     const spawnAngle = Math.random() * Math.PI * 2;
     player.x = fountainCx + Math.cos(spawnAngle) * spawnDist;
     player.y = fountainCy + Math.sin(spawnAngle) * spawnDist;
@@ -3241,10 +3318,14 @@
     if(currentLevelConfig && currentLevelConfig.id === "1-1" && !DEV_GIVE_LEGENDARY_WEAPON){
       const devGiftItem = makeItem("weapon", "uncommon");
       devGiftItem.name = "Gift from dev❤️";
-      const giftX = player.x + 42 * DPR;
-      const giftY = player.y;
-      lootDrops.push({ x: giftX, y: giftY, r: 12*DPR, item: devGiftItem, t: 0, bob: rand(0, Math.PI*2) });
-      level11Arrow = { targetX: giftX, targetY: giftY, t: 0, life: 6, delay: 1 };
+      const fountainCx = mapW / 2, fountainCy = mapH / 2;
+      const distPlayerToFountain = Math.hypot(player.x - fountainCx, player.y - fountainCy);
+      const giftDist = Math.max(distPlayerToFountain, 1) + 48 * DPR;
+      const giftAngle = Math.atan2(player.y - fountainCy, player.x - fountainCx);
+      const giftX = fountainCx + Math.cos(giftAngle) * giftDist;
+      const giftY = fountainCy + Math.sin(giftAngle) * giftDist;
+      lootDrops.push({ x: giftX, y: giftY, r: 12*DPR, item: devGiftItem, t: 0, bob: rand(0, Math.PI*2), devGift: true });
+      level11Arrow = { targetX: giftX, targetY: giftY, t: 0, life: 10, delay: 0.5 };
     }
     tokensAtRunStart = tokens;
     recomputeBuild();
@@ -3611,6 +3692,17 @@
       const atkPerSec = 1 / Math.max(0.0001, player.atkRate);
       atkTag.textContent = `ATK ${atkPerSec.toFixed(2)}/s`;
     }
+
+    if(hudQuestStatus){
+      const is11 = running && currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones && level11Zones.length > 0;
+      if(is11){
+        hudQuestStatus.textContent = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+        hudQuestStatus.style.display = "";
+      } else {
+        hudQuestStatus.style.display = "none";
+        hudQuestStatus.textContent = "";
+      }
+    }
   }
 
   function updateQuestAfterSuccessfulRun(summary, elapsedS){
@@ -3914,7 +4006,8 @@
         if(ENDLESS_RUN || !TEST_SINGLE_MOB_MODE){
           if(ENDLESS_RUN){
             const baseRate = 0.47;
-            const spawnsPerSec = baseRate * getWaveScale();
+            let spawnsPerSec = baseRate * getWaveScale();
+            if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11BossPhase === "spawned") spawnsPerSec *= 0.95;
             spawnAcc += Math.min(2, spawnsPerSec) * dt;
           } else {
             threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
@@ -4879,10 +4972,7 @@
       ctx.restore();
     }
 
-    // Level 1-1: permanent sealed counter (1/6 … 6/6) + arrow to next/miniboss manhole
-    if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones.length > 0){
-      drawLevel11StatusHUD();
-    }
+    // Level 1-1: sealed counter moved to HUD (hudQuestStatus) below HP/XP/Token bars
     if((level11Active || (currentLevelConfig && currentLevelConfig.id === "1-1")) && level11Arrow){
       drawLevel11ArrowIndicator();
     }
@@ -5287,6 +5377,18 @@
     ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillStyle="rgba(255,255,255,0.96)";
     ctx.fillText(it.icon, 0, 1*DPR);
+
+    if(L.devGift){
+      ctx.font = `${12*DPR}px ui-sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = "rgba(255,255,255,0.98)";
+      ctx.strokeStyle = "rgba(0,0,0,0.8)";
+      ctx.lineWidth = 2 * DPR;
+      const labelY = -r - 8*DPR;
+      ctx.strokeText("Gift from dev❤️", 0, labelY);
+      ctx.fillText("Gift from dev❤️", 0, labelY);
+    }
 
     ctx.restore();
   }
