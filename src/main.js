@@ -239,8 +239,8 @@
   const TEST_SINGLE_MOB_MODE = false;
   /** When true, each new run counts as first-time: tutorial "seen" state is cleared at run start so tutorials show every run. */
   const DEV_TUTORIAL_EVERY_RUN = true;
-  /** When true, start each run with a legendary weapon equipped (for testing). */
-  const DEV_GIVE_LEGENDARY_WEAPON = true;
+  /** When true, start each run with a legendary weapon equipped (for testing). Disabled: use dev gift on 1-1 instead. */
+  const DEV_GIVE_LEGENDARY_WEAPON = false;
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
   const ENDLESS_RUN = true;
 
@@ -3237,6 +3237,14 @@
     resetState(true);
     if(DEV_GIVE_LEGENDARY_WEAPON){
       equipped.weapon = makeItem("weapon", "legendary");
+    }
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && !DEV_GIVE_LEGENDARY_WEAPON){
+      const devGiftItem = makeItem("weapon", "uncommon");
+      devGiftItem.name = "Gift from dev❤️";
+      const giftX = player.x + 42 * DPR;
+      const giftY = player.y;
+      lootDrops.push({ x: giftX, y: giftY, r: 12*DPR, item: devGiftItem, t: 0, bob: rand(0, Math.PI*2) });
+      level11Arrow = { targetX: giftX, targetY: giftY, t: 0, life: 6, delay: 1 };
     }
     tokensAtRunStart = tokens;
     recomputeBuild();
