@@ -47,7 +47,7 @@
   const atkWrap = document.getElementById("atkWrap");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.003.8";
+  const GAME_VERSION = "1.004.0";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -217,7 +217,7 @@
     dashDur: 0.10,
     dashCD: 0.90,
 
-    baseDmg: 8,
+    baseDmg: 8.8,   // 8 + 10%
     baseAtk: 0.82,     // attack interval (s); higher = slower fire
     bulletSpeed: 540,
     bulletLife: 0.95,
@@ -237,6 +237,10 @@
 
   // ========= Dev/Test toggles =========
   const TEST_SINGLE_MOB_MODE = false;
+  /** When true, each new run counts as first-time: tutorial "seen" state is cleared at run start so tutorials show every run. */
+  const DEV_TUTORIAL_EVERY_RUN = true;
+  /** When true, start each run with a legendary weapon equipped (for testing). */
+  const DEV_GIVE_LEGENDARY_WEAPON = true;
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
   const ENDLESS_RUN = true;
 
@@ -566,6 +570,11 @@
   let equipped = {weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
 
   let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
+  const MAX_LOOT_DROPS = 30;   // cap for long runs; remove oldest when exceeded
+  const MAX_ORBS = 150;        // cap for long runs; remove oldest when exceeded
+  // Level 1-1: welding interaction around manholes (similar to blood sampling)
+  let level11WeldingZoneId = null;
+  let level11WeldMs = 0;
   let kills=0, minibossKills=0, bossKills=0, lootCount=0, streak=0, streakT=0;
   let threat=1.0, spawnAcc=0, atkCD=0;
   let lootPickupCooldown=0;
@@ -629,6 +638,15 @@
   let mapW = 0, mapH = 0;
   let manholes = [];
   let mallProps = [];
+  // Level 1-1 special scenario: manhole zones with clustered mice
+  let level11Active = false;
+  let level11Zones = [];          // { id, manholeIndex, corpseX, corpseY, corpseR, aggroR, activated, triggeredAt, minibossSpawned, spawnsStopped, spawnAcc, closed }
+  let level11ZonesCleared = 0;    // how many manholes have been welded shut
+  let level11Arrow = null;        // { targetX, targetY, t, life }
+  let level11BossPhase = null;    // null | "warnDelay" | "warned" | "spawned"
+  let level11BossPhaseMs = 0;
+  let level11Kills = 0;           // non-boss kills on 1-1 for guaranteed weapon drop window
+  let level11WeaponDropped = false;
 
   // Skittering Mouse sprites (2-frame animation: move1, move2)
   const skMouseSprites = {
@@ -664,7 +682,20 @@
     ];
     playerSprites.frontIdle = load(enc("Front_Idle.png"));
     playerSprites.backIdle = load(enc("Back_Idle.png"));
-    playerSprites.extraction = load(enc("Character_extraction.png"));
+    // Extraction sprite: log load success/failure so we can debug asset issues easily.
+    const extractionPath = enc("Character_extraction.png");
+    const extractionImg = load(extractionPath);
+    extractionImg.onload = () => {
+      try {
+        console.log("[BloodLoot] Extraction sprite loaded:", extractionImg.src, extractionImg.naturalWidth, extractionImg.naturalHeight);
+      } catch {}
+    };
+    extractionImg.onerror = (err) => {
+      try {
+        console.error("[BloodLoot] Failed to load extraction sprite:", extractionImg.src, err);
+      } catch {}
+    };
+    playerSprites.extraction = extractionImg;
   })();
 
   // One-time reset: bump version to clear all progression for a clean release.
@@ -676,6 +707,15 @@
     for(const k of toRemove) try{ localStorage.removeItem(k); }catch(e){}
     try{ localStorage.setItem(key, String(AFFIXLOOT_STORAGE_VERSION)); }catch(e){}
   })();
+
+  // Tutorial: first-time hints (persisted per id)
+  const TUTORIAL_STORAGE_PREFIX = "affixloot_tutorial_";
+  function getTutorialSeen(id){ try{ return localStorage.getItem(TUTORIAL_STORAGE_PREFIX + id) === "1"; }catch(e){ return false; } }
+  function setTutorialSeen(id){ try{ localStorage.setItem(TUTORIAL_STORAGE_PREFIX + id, "1"); }catch(e){} }
+  let tutorialOverlay = null;
+  let tutorialCountdown = null;
+  let tutorialCountdownEndT = 0;
+  let tutorialBubbleEl = null;
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
@@ -979,7 +1019,15 @@
   function previewItem(slotKey){
     const map={weapon:"weapon",armor:"armor",ring1:"ring",ring2:"ring",jewel:"jewel"};
     const type=map[slotKey]||"weapon";
-    const icon = type==="weapon"?"⚔️":type==="armor"?"🛡️":type==="ring"?"💍":"💎";
+    if(type==="weapon"){
+      // Default starting weapon label when nothing is equipped
+      return {type:"weapon",rarity:"common",icon:"🔫",name:"Gun",base:{},affixes:[]};
+    }
+    if(type==="armor"){
+      // Default starting armor label when nothing is equipped
+      return {type:"armor",rarity:"common",icon:"👗",name:"Dress",base:{},affixes:[]};
+    }
+    const icon = type==="ring"?"💍":"💎";
     return {type,rarity:"common",icon,name:"(empty)",base:{},affixes:[]};
   }
   function renderMini(label,slotKey,item){
@@ -1047,6 +1095,55 @@
     toast.prepend(div);
     setTimeout(()=>div.remove(), 2500);
   }
+
+  function showTutorial(id, text, worldX, worldY){
+    if(getTutorialSeen(id)) return;
+    if(tutorialOverlay !== null) return;
+    tutorialOverlay = { id, text, focusX: worldX, focusY: worldY };
+    paused = true;
+    if(tutorialBubbleEl && tutorialBubbleEl.parentNode) tutorialBubbleEl.remove();
+    const wrap = document.createElement("div");
+    wrap.id = "tutorialOverlayWrap";
+    const camOffsetX = W*0.5 - player.x;
+    const camOffsetY = H*0.5 - player.y;
+    const screenFocusX = camOffsetX + worldX;
+    const screenFocusY = camOffsetY + worldY;
+    const focusInTopHalf = screenFocusY < H*0.5;
+    const bubbleAtTop = focusInTopHalf;
+    wrap.style.cssText = bubbleAtTop
+      ? "position:fixed;inset:0;z-index:10000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:min(80px,12vh);pointer-events:auto;"
+      : "position:fixed;inset:0;z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding-top:min(80px,12vh);pointer-events:auto;";
+    const bubble = document.createElement("div");
+    bubble.style.cssText = "background:#111;border:3px solid #fff;color:#fff;padding:20px 24px;border-radius:12px;max-width:min(420px,90vw);box-shadow:0 8px 32px rgba(0,0,0,0.5);font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',ui-sans-serif,sans-serif;";
+    bubble.innerHTML = `
+      <p style="margin:0 0 16px 0;font-size:15px;line-height:1.5;font-family:inherit;">${text}</p>
+      <button type="button" id="tutorialGotIt" style="display:block;margin:0 auto;padding:10px 24px;font-size:14px;font-weight:800;background:#333;color:#fff;border:2px solid #fff;border-radius:8px;cursor:pointer;font-family:inherit;letter-spacing:.6px;text-transform:uppercase;">Got it (E)</button>
+    `;
+    wrap.appendChild(bubble);
+    tutorialBubbleEl = wrap;
+    document.body.appendChild(wrap);
+    const btn = wrap.querySelector("#tutorialGotIt");
+    if(btn){
+      const onKey = (ev) => {
+        const k = ev.key || "";
+        if(k === "e" || k === "E"){
+          if(ev.repeat) return;
+          ev.preventDefault();
+          btn.click();
+        }
+      };
+      addEventListener("keydown", onKey);
+      btn.onclick = () => {
+        removeEventListener("keydown", onKey);
+        if(wrap.parentNode) wrap.remove();
+        if(tutorialOverlay){ setTutorialSeen(tutorialOverlay.id); tutorialOverlay = null; }
+        tutorialBubbleEl = null;
+        tutorialCountdown = 3;
+        tutorialCountdownEndT = now() + 1;
+      };
+    }
+  }
+
   function showExtractionSummary(data){
     if(!data) return;
     const overlay = document.getElementById("overlay");
@@ -1329,7 +1426,7 @@
     const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
     player.invuln = Math.max(player.invuln, invulnDur);
 
-    lootPickupCooldown = 5;
+    lootPickupCooldown = 0;
 
     pendingLoot=null;
     inCompare=false;
@@ -1350,6 +1447,8 @@
     for(let i=0;i<n;i++){
       orbs.push({ x:x+rand(-10,10)*DPR, y:y+rand(-10,10)*DPR, r:(boss?7:elite?6:4)*DPR, vx:rand(-20,20)*DPR, vy:rand(-20,20)*DPR });
     }
+    while(orbs.length > MAX_ORBS) orbs.shift();
+    showTutorial("xp_orb", "XP orbs grant experience. Collect them to level up and become stronger.", x, y);
   }
   function dropLoot(x,y, elite=false, boss=false, miniboss=false){
     const rawP = boss && !miniboss ? 0.72 : miniboss ? 0.52 : elite ? BASE.lootDropElite : BASE.lootDropBase;
@@ -1366,8 +1465,30 @@
       if(rarity==="uncommon" && Math.random()<0.32*bump) rarity="rare";
       if(rarity==="rare" && Math.random()<0.14*bump) rarity="legendary";
     }
+    // 1-1: drops never higher than rare
+    const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
+    if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
     const item=makeItem(type,rarity);
+    const dropX = x+rand(-14,14)*DPR, dropY = y+rand(-14,14)*DPR;
+    lootDrops.push({ x:dropX, y:dropY, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
+    while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
+
+    showTutorial("item_drop", "Items drop from defeated enemies. Walk over them to pick up and compare with your current gear.", dropX, dropY);
+
+    // Track guaranteed weapon drop window for level 1-1
+    if(levelId === "1-1" && !level11WeaponDropped && item.type === "weapon" && level11Kills <= 10){
+      level11WeaponDropped = true;
+    }
+  }
+
+  function dropGuaranteedWeaponLevel11(x,y){
+    const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
+    let rarity = rollRarity();
+    if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
+    const item = makeItem("weapon", rarity);
     lootDrops.push({ x:x+rand(-14,14)*DPR, y:y+rand(-14,14)*DPR, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
+    while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
+    level11WeaponDropped = true;
   }
 
   function getMinMobHP(){
@@ -1396,7 +1517,15 @@
     while(player.xp >= player.xpNeed){
       player.xp -= player.xpNeed;
       player.level++;
-      player.xpNeed = Math.round(player.xpNeed*1.22 + 6);
+      const isLevel11 = currentLevelConfig && currentLevelConfig.id === "1-1";
+      if(isLevel11){
+        // Level 1-1: faster early level-ups (especially 2 and 3)
+        if(player.level === 2) player.xpNeed = 26;       // was ~30
+        else if(player.level === 3) player.xpNeed = 36;  // was ~43
+        else player.xpNeed = Math.round(player.xpNeed*1.22 + 6);
+      } else {
+        player.xpNeed = Math.round(player.xpNeed*1.22 + 6);
+      }
       beep({freq: 920, dur:0.09, type:"triangle", gain:0.06});
       player.maxHP += 6; player.hp += 6;
 
@@ -1434,6 +1563,9 @@
 
   // Wave = 20s interval; scale 1.2^wave, capped so enemies don't one-shot or become untouchable
   function getWaveScale(){
+    const isLevel11 = currentLevelConfig && currentLevelConfig.id === "1-1";
+    // On level 1-1, mice should not get stronger before the custom boss wave has spawned.
+    if(isLevel11 && level11BossPhase !== "spawned") return 1;
     const waveIndex = Math.floor(gameTime / 20);
     return Math.pow(1.2, waveIndex);
   }
@@ -1453,15 +1585,23 @@
     const hp = (isElite ? rand(65,90) : rand(18,28)) * scale;
     const baseSp = (isElite ? rand(64,80) : rand(78,102)) * 1.5 * scaleSpeed;
     const spMult = (1/1.5) + Math.random() * (1.5 - 1/1.5);
-    const sp = baseSp * spMult;
+    let sp = baseSp * spMult;
+    // 1-1: cap speed so fastest mice are just below player speed
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && sp > 0) {
+      const maxSp = (typeof player !== "undefined" && player.moveSpeed != null ? player.moveSpeed : BASE.speed) * 0.99;
+      if(sp * DPR > maxSp * DPR) sp = maxSp;
+    }
+    sp *= DPR;
+    if(currentLevelConfig && currentLevelConfig.id === "1-1") sp *= 0.8;  // 1-1: skittering mice 20% slower
     const contactDmg = Math.round((isElite ? 10 : 8) * scaleDmg);
+    const hpScale = (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1) * (currentLevelConfig && currentLevelConfig.id === "1-1" ? 0.8 : 1);
 
     enemies.push({
       kind: "skitteringMouse",
       x,y, r: baseR*DPR,
-      hp: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
-      maxHP: (hp*(isElite?1.15:1)) * (currentLevelConfig ? currentLevelConfig.enemyHpScale : 1),
-      sp: sp*DPR,
+      hp: (hp*(isElite?1.15:1)) * hpScale,
+      maxHP: (hp*(isElite?1.15:1)) * hpScale,
+      sp,
       elite: isElite,
       boss: false,
       icon: "🐭",
@@ -1482,16 +1622,20 @@
     const smallestMobHP = 18 * scale;
     const smallestMobDmg = 8 * scale;
 
+    const lvl1_1HpScale = (currentLevelConfig && currentLevelConfig.id === "1-1") ? 0.8 : 1;
     if(isMiniboss){
       const r = BASE_MOUSE_R * 3;
-      const hp = smallestMobHP * 5;
+      const hp = smallestMobHP * 5 * lvl1_1HpScale;
       const contactDmg = Math.round(smallestMobDmg * 5);
+      let minibossSp = 92 * DPR * Math.min(1, scaleSpeed);
+      if(currentLevelConfig && currentLevelConfig.id === "1-1") minibossSp *= 0.8;  // 1-1: skittering mice 20% slower
+      if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && minibossSp > player.moveSpeed * DPR) minibossSp = player.moveSpeed * DPR * 0.99;
       enemies.push({
         kind: "skitteringMouse",
         x,y,
         r: r*DPR,
         hp, maxHP: hp,
-        sp: 92*DPR * Math.min(1, scaleSpeed),
+        sp: minibossSp,
         elite: true,
         boss: true,
         miniboss: true,
@@ -1504,14 +1648,17 @@
     }
 
     const r = BASE_MOUSE_R * 6;
-    const hp = smallestMobHP * 20;
+    const hp = smallestMobHP * 20 * lvl1_1HpScale;
     const contactDmg = Math.round(smallestMobDmg * 20);
+    let bossSp = 98 * DPR * Math.min(1, scaleSpeed);
+    if(currentLevelConfig && currentLevelConfig.id === "1-1") bossSp *= 0.8;  // 1-1: skittering mice 20% slower
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && bossSp > player.moveSpeed * DPR) bossSp = player.moveSpeed * DPR * 0.99;
     enemies.push({
       kind: "skitteringMouse",
       x,y,
       r: r*DPR,
       hp, maxHP: hp,
-      sp: 98*DPR * Math.min(1, scaleSpeed),
+      sp: bossSp,
       elite: true,
       boss: true,
       miniboss: false,
@@ -1527,15 +1674,16 @@
     const scale = Math.min(Math.pow(1.2, 7), WAVE_SCALE_DMG_CAP);
     const smallestMobHP = 18 * scale;
     const smallestMobDmg = 8 * scale;
+    const lvl1_1HpScale = (currentLevelConfig && currentLevelConfig.id === "1-1") ? 0.8 : 1;
     const r = BASE_MOUSE_R * 8;
-    const hp = smallestMobHP * 55;
+    const hp = smallestMobHP * 55 * lvl1_1HpScale;
     const contactDmg = Math.round(smallestMobDmg * 55);
     enemies.push({
       kind: "skitteringMouse",
       x,y,
       r: r*DPR,
       hp, maxHP: hp,
-      sp: 88*DPR,
+      sp: (currentLevelConfig && currentLevelConfig.id === "1-1" ? 0.8 : 1) * 88*DPR,  // 1-1: skittering mice 20% slower
       elite: true,
       boss: true,
       miniboss: false,
@@ -1645,14 +1793,37 @@
   }
 
   function killEnemy(e){
+    const isLevel11 = level11Active && currentLevelConfig && currentLevelConfig.id === "1-1";
     enemies.splice(enemies.indexOf(e),1);
     kills++;
-    if(e.miniboss) minibossKills++;
+    if(e.miniboss){
+      minibossKills++;
+      if(isLevel11){
+        showSimpleToast("Seal the Manhole");
+        const zone = level11Zones.find(z => z.id === e.clusterZone);
+        if(zone){
+          const m = manholes[zone.manholeIndex];
+          if(m) level11Arrow = { targetX: m.x, targetY: m.y, t: 0, life: 4, delay: 1 };
+        }
+      }
+    }
     if(e.boss && !e.miniboss) bossKills++;
     streak++; streakT=1.8;
 
     dropXP(e.x,e.y, e.elite, e.boss);
-    dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
+
+    if(isLevel11 && !e.boss){
+      level11Kills++;
+      const withinGuaranteeWindow = level11Kills <= 10;
+      const mustGuaranteeNow = withinGuaranteeWindow && !level11WeaponDropped && level11Kills === 10;
+      if(mustGuaranteeNow){
+        dropGuaranteedWeaponLevel11(e.x, e.y);
+      } else {
+        dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
+      }
+    } else {
+      dropLoot(e.x,e.y, e.elite, e.boss, e.miniboss);
+    }
 
     // Blood pool: only some enemies drop blood; bosses always do.
     let makeBloodPool = true;
@@ -1700,6 +1871,7 @@
           secondary,
           splatter
         });
+        showTutorial("blood_pool", "Blood pools can be sampled. Stand still on one to collect a sample.", e.x, e.y);
         // Small blood-splat burst when pool appears.
         for(let n=0;n<9;n++){
           const a = Math.random()*Math.PI*2;
@@ -1718,9 +1890,9 @@
       }
     }
 
-    if(e.boss){
+    if(e.boss && !e.miniboss){
       bossKilled=true;
-      showSimpleToast("Extraction available — press X to leave.");
+      showTutorial("extraction", "You've killed the boss. Extraction is available (X). Extract before you are killed, or else you will lose all loot. (But… the longer you fight, the better the rewards.)", e.x, e.y);
       spawnLegendaryBurst(e.x,e.y,true);
       beep({freq: 180, dur:0.18, type:"sawtooth", gain:0.06, slide:0.55});
       beep({freq: 420, dur:0.14, type:"triangle", gain:0.05, slide:0.75});
@@ -2018,7 +2190,7 @@
     if(overlayCard) overlayCard.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="Choose Level";
-    ovSub.textContent="Unlock each level by winning the previous one. Selected level is used when you Start Looting.";
+    ovSub.textContent="Click an unlocked level to start a run. Locked levels must be unlocked by winning the previous one.";
     ovBtns.innerHTML="";
     ovBody.innerHTML="";
     const wrap = document.createElement("div");
@@ -2033,13 +2205,15 @@
       row.innerHTML = `
         <span class="levelSelectId">${lvl.id}</span>
         <span class="levelSelectName">${lvl.name || lvl.id}</span>
-        ${unlocked ? (selected ? '<span class="levelSelectBadge">✓ Selected</span>' : '<span class="levelSelectBadge">Select</span>') : '<span class="levelSelectLock">🔒 Locked</span>'}
+        ${unlocked ? '<span class="levelSelectBadge">Play</span>' : '<span class="levelSelectLock">🔒 Locked</span>'}
       `;
       if(unlocked){
         row.onclick = () => {
           selectedLevelId = lvl.id;
           beep({freq:520,dur:0.06,type:"triangle",gain:0.05});
-          showChooseLevelMenu();
+          ensureAudio();
+          stopMenuMusic();
+          startGame(false);
         };
       }
       wrap.appendChild(row);
@@ -2050,18 +2224,9 @@
     btnWrap.style.display = "flex";
     btnWrap.style.gap = "10px";
     btnWrap.style.flexWrap = "wrap";
-    const startBtn = document.createElement("button");
-    startBtn.className = "menuBtnPrimary";
-    startBtn.textContent = "Start Looting!";
-    startBtn.onclick = () => {
-      ensureAudio();
-      stopMenuMusic();
-      startGame(false);
-    };
     const backBtn = document.createElement("button");
     backBtn.textContent = "Back";
     backBtn.onclick = () => showMainMenu();
-    btnWrap.appendChild(startBtn);
     btnWrap.appendChild(backBtn);
     ovBody.appendChild(btnWrap);
   }
@@ -2380,8 +2545,16 @@
         menu.style.cssText = "position:absolute; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:10px 14px; font-size:11px; z-index:15; box-shadow:0 4px 20px rgba(0,0,0,.6); display:flex; flex-direction:column; gap:8px; min-width:140px;";
         const rect = balloon.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
-        menu.style.left = (rect.left - panelRect.left + rect.width / 2 - 70) + "px";
-        menu.style.top = (rect.bottom - panelRect.top + 8) + "px";
+        const menuWidth = 200;
+        const menuHeight = 80;
+        const idealLeft = rect.right - panelRect.left + 10;
+        const maxLeft = panelRect.width - menuWidth - 8;
+        const left = Math.max(8, Math.min(maxLeft, idealLeft));
+        const idealTop = rect.top - panelRect.top + rect.height / 2 - menuHeight / 2;
+        const maxTop = panelRect.height - menuHeight - 8;
+        const top = Math.max(8, Math.min(maxTop, idealTop));
+        menu.style.left = left + "px";
+        menu.style.top = top + "px";
         const confirmBtn = document.createElement("button");
         confirmBtn.textContent = "CONFIRM UPGRADE";
         confirmBtn.style.cssText = "padding:8px 12px; border:1px solid rgba(124,255,178,.6); background:rgba(124,255,178,.2); color:#b8ffe0; font-weight:800; cursor:pointer; border-radius:6px;";
@@ -2731,6 +2904,7 @@
   // ========= Pause / Game Over =========
   function togglePause(){
     if(inCompare) return;
+    if(tutorialOverlay !== null) return;
     paused=!paused;
 
     if(paused){
@@ -2859,12 +3033,28 @@
     extractionFlameRing=null;
     extractionTransition=null;
     deathSequence=null;
+    tutorialOverlay=null;
+    tutorialCountdown=null;
+    if(tutorialBubbleEl && tutorialBubbleEl.parentNode) tutorialBubbleEl.remove();
+    tutorialBubbleEl=null;
     runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
     runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
     bloodPools = [];
     runBloodMl = {};
     gatheringPool = null;
     gatheringAccumulatedMs = 0;
+
+    // Level 1-1 manhole-zone scenario state
+    level11Active = !!(currentLevelConfig && currentLevelConfig.id === "1-1");
+    level11Zones = [];
+    level11ZonesCleared = 0;
+    level11Arrow = null;
+    level11WeldingZoneId = null;
+    level11WeldMs = 0;
+    level11Kills = 0;
+    level11WeaponDropped = false;
+    level11BossPhase = null;
+    level11BossPhaseMs = 0;
 
     runTotalXp = 0;
     tokenBarProgress = 0;
@@ -2892,30 +3082,113 @@
       }
     }
     const doorInset = 40 * DPR;
-    const propTypes = [
-      { id: "pølsebod", w: 70*DPR, h: 50*DPR, fill: "#8B4513", stroke: "#5D2E0C", sign: "🌭" },
-      { id: "klesbutikk", w: 85*DPR, h: 55*DPR, fill: "#4A6FA5", stroke: "#2E4563", sign: "👕" },
-      { id: "skobutikk", w: 65*DPR, h: 48*DPR, fill: "#2C1810", stroke: "#1a0e08", sign: "👟" },
-      { id: "kiosk", w: 55*DPR, h: 45*DPR, fill: "#C41E3A", stroke: "#8B1528", sign: "📰" },
-      { id: "blomster", w: 60*DPR, h: 50*DPR, fill: "#228B22", stroke: "#145214", sign: "🌸" },
-      { id: "søppel", w: 50*DPR, h: 45*DPR, fill: "#3d3d3d", stroke: "#252525", sign: "🗑️" },
+    // Small mall buildings: 8×5 floor tiles (tiled floor is 48×48px before DPR).
+    const TILE = 48 * DPR;
+    const SHOP_W = 8 * TILE;
+    const SHOP_H = 5 * TILE;
+    const shopTypes = [
+      { id: "Hot Dog Stand",  w: SHOP_W, h: SHOP_H, fill: "#8B4513", stroke: "#5D2E0C", sign: "🌭" },
+      { id: "Clothing Store", w: SHOP_W, h: SHOP_H, fill: "#4A6FA5", stroke: "#2E4563", sign: "👕" },
+      { id: "Shoe Store",     w: SHOP_W, h: SHOP_H, fill: "#2C1810", stroke: "#1a0e08", sign: "👟" },
+      { id: "Newsstand",      w: SHOP_W, h: SHOP_H, fill: "#C41E3A", stroke: "#8B1528", sign: "📰" },
+      { id: "Flower Shop",    w: SHOP_W, h: SHOP_H, fill: "#228B22", stroke: "#145214", sign: "🌸" },
+      { id: "Trash",          w: SHOP_W, h: SHOP_H, fill: "#3d3d3d", stroke: "#252525", sign: "🗑️" },
     ];
     mallProps = [];
     const zoneW = mapW / 2, zoneH = mapH / 3;
     const pad = 55 * DPR;
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 2; col++) {
-        let x = pad + rand(0, Math.max(10, zoneW - 110*DPR)) + col * zoneW;
-        let y = pad + rand(0, Math.max(10, zoneH - 90*DPR)) + row * zoneH;
+        // Place top-left of an 8×5 tile shop somewhere inside this zone, avoiding fountain area.
+        const T = shopTypes[ mallProps.length % shopTypes.length ];
+        const maxXSpan = Math.max(10, zoneW - T.w - 2*pad);
+        const maxYSpan = Math.max(10, zoneH - T.h - 2*pad);
+        let x = pad + rand(0, maxXSpan) + col * zoneW;
+        let y = pad + rand(0, maxYSpan) + row * zoneH;
         const cx = x, cy = y;
         if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR) {
           const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
           x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR);
           y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR);
         }
-        const T = propTypes[ mallProps.length % propTypes.length ];
-        mallProps.push({ type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
+        mallProps.push({ kind: "shop", type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
       }
+    }
+
+    // Helper: axis-aligned rectangle overlap
+    function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh){
+      return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+    }
+    // Helper: check if proposed rect overlaps any existing mallProp or is too close to a manhole or fountain
+    function canPlaceRect(x, y, w, h){
+      const cx = x + w/2;
+      const cy = y + h/2;
+      // Keep inside map
+      const marginInner = 40 * DPR;
+      if(x < marginInner || y < marginInner || x + w > mapW - marginInner || y + h > mapH - marginInner) return false;
+      // Avoid fountain
+      const dF = Math.hypot(cx - fountainCx, cy - fountainCy);
+      if(dF < avoidR + Math.max(w,h)*0.6) return false;
+      // Avoid manholes
+      for(const m of manholes){
+        const d = Math.hypot(cx - m.x, cy - m.y);
+        if(d < m.r + Math.max(w,h)*0.6) return false;
+      }
+      // Avoid other props
+      for(const p of mallProps){
+        if(rectsOverlap(x,y,w,h, p.x, p.y, p.w, p.h)) return false;
+      }
+      return true;
+    }
+
+    // Additional scenery: benches with trash (2×3 tiles), small flower pots (1×1), large plants (2×2)
+    const BENCH_W = 2 * TILE, BENCH_H = 3 * TILE;
+    const POT_W = 1 * TILE, POT_H = 1 * TILE;
+    const PLANT_W = 2 * TILE, PLANT_H = 2 * TILE;
+
+    function placeScenery(kind, count){
+      const maxAttempts = 40;
+      for(let i=0;i<count;i++){
+        let placed = false;
+        for(let attempt=0; attempt<maxAttempts && !placed; attempt++){
+          let w, h;
+          if(kind === "bench"){
+            w = BENCH_W; h = BENCH_H;
+          } else if(kind === "flowerPotSmall"){
+            w = POT_W; h = POT_H;
+          } else {
+            w = PLANT_W; h = PLANT_H;
+          }
+          const x = rand(60*DPR, mapW - w - 60*DPR);
+          const y = rand(60*DPR, mapH - h - 60*DPR);
+          if(!canPlaceRect(x,y,w,h)) continue;
+          if(kind === "bench"){
+            mallProps.push({ kind:"bench", type:"Bench", x, y, w, h });
+          } else if(kind === "flowerPotSmall"){
+            mallProps.push({ kind:"flowerPotSmall", type:"Flower Pot", x, y, w, h });
+          } else if(kind === "plantLarge"){
+            // Precompute leaf layout so large plants are static (no per-frame randomness).
+            const leaves = [];
+            const leafCount = 7;
+            for(let j=0;j<leafCount;j++){
+              const ang = (j/leafCount) * Math.PI * 2;
+              const mul = 0.6 + 0.4 * Math.random();
+              leaves.push({ ang, mul });
+            }
+            mallProps.push({ kind:"plantLarge", type:"Planter", x, y, w, h, leaves });
+          }
+          placed = true;
+        }
+      }
+    }
+
+    placeScenery("bench", 5);
+    placeScenery("flowerPotSmall", 8);
+    placeScenery("plantLarge", 4);
+
+    // Level 1-1: pre-place clustered mice and corpses around each manhole
+    if(level11Active){
+      setupLevel11Zones();
     }
     const poolR = 80 * 1.4 * DPR;
     const spawnDist = poolR + player.r + 28 * DPR;
@@ -2953,9 +3226,18 @@
   function startGame(isPractice){
     practice=!!isPractice;
     currentLevelConfig = getLevelConfig(selectedLevelId);
+    if(DEV_TUTORIAL_EVERY_RUN){
+      try{
+        const keys = Object.keys(localStorage).filter(k => k.startsWith(TUTORIAL_STORAGE_PREFIX));
+        keys.forEach(k => localStorage.removeItem(k));
+      }catch(e){}
+    }
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState(true);
+    if(DEV_GIVE_LEGENDARY_WEAPON){
+      equipped.weapon = makeItem("weapon", "legendary");
+    }
     tokensAtRunStart = tokens;
     recomputeBuild();
     renderEquipMini();
@@ -2976,14 +3258,314 @@
     fountainDecorAngle = rand(0, Math.PI * 2);
     fountainDecorRadiusFrac = 0.32 + rand(0, 0.16);
 
-    if(ENDLESS_RUN){
-      for(let i=0;i<28;i++) spawnEnemy(false);
-    } else if(TEST_SINGLE_MOB_MODE){
-      for(let i=0;i<14;i++) spawnEnemy(false);
-    } else {
-      for(let i=0;i<4;i++) spawnEnemy(false);
+    // Level 1-1 uses custom manhole-cluster scenario; other levels use standard initial spawns
+    if(!level11Active){
+      if(ENDLESS_RUN){
+        for(let i=0;i<28;i++) spawnEnemy(false);
+      } else if(TEST_SINGLE_MOB_MODE){
+        for(let i=0;i<14;i++) spawnEnemy(false);
+      } else {
+        for(let i=0;i<4;i++) spawnEnemy(false);
+      }
     }
     ensureAudio();
+  }
+
+  // ========= Level 1-1: Manhole cluster scenario =========
+  const LEVEL11_CLUSTER_PER_MANHOLE = 20;
+  const LEVEL11_CLUSTER_INNER_COUNT = 6;
+  const LEVEL11_MINIBOSS_DELAY_SEC = 30;
+  const LEVEL11_WELD_DURATION_SEC = 3.0;
+  const LEVEL11_WELD_RADIUS = 70; // world units before DPR multiplier applied when used
+
+  function setupLevel11Zones(){
+    if(!level11Active || !manholes || !manholes.length) return;
+    level11Zones = [];
+    level11ZonesCleared = 0;
+    level11Arrow = null;
+    level11WeldingZoneId = null;
+    level11WeldMs = 0;
+
+    const corpseR = player ? player.r : 10 * DPR;
+    // Aggro zone slightly larger than bullet range so mice aggro before player can shoot them from outside
+    const bulletRange = (BASE.bulletSpeed * BASE.bulletLife) * DPR;
+    const aggroR = Math.max(260 * DPR, bulletRange * 1.12);
+    const totalZones = Math.min(6, manholes.length);
+    for(let i=0;i<totalZones;i++){
+      const m = manholes[i];
+      if(!m) continue;
+      const ang = Math.random() * Math.PI * 2;
+      const dist = m.r + 70 * DPR;
+      const cx = m.x + Math.cos(ang) * dist;
+      const cy = m.y + Math.sin(ang) * dist;
+      const zone = {
+        id: i,
+        manholeIndex: i,
+        corpseX: cx,
+        corpseY: cy,
+        corpseR,
+        aggroR,
+        activated: false,
+        triggeredAt: null,
+        minibossSpawned: false,
+        spawnsStopped: false,
+        spawnAcc: 0,
+        closed: false
+      };
+      level11Zones.push(zone);
+      spawnLevel11ClusterForZone(zone);
+    }
+  }
+
+  function spawnLevel11ClusterForZone(zone){
+    const total = LEVEL11_CLUSTER_PER_MANHOLE;
+    const inner = Math.min(LEVEL11_CLUSTER_INNER_COUNT, total);
+    const outer = total - inner;
+    const innerR = zone.corpseR * 1.3;
+    const outerR = zone.corpseR * 2.4;
+
+    for(let i=0;i<total;i++){
+      const isInner = i < inner;
+      const ringIndex = isInner ? i : (i - inner);
+      const ringCount = isInner ? inner : Math.max(1, outer);
+      const baseAngle = (ringIndex / ringCount) * Math.PI * 2;
+      const jitter = rand(-Math.PI * 0.04, Math.PI * 0.04);
+      const ang = baseAngle + jitter;
+      const baseR = isInner ? innerR : outerR;
+      const r = baseR * rand(0.7, 1.15);
+      const x = zone.corpseX + Math.cos(ang) * r;
+      const y = zone.corpseY + Math.sin(ang) * r;
+
+      // Reuse normal enemy creation but override position and mark as cluster-idle
+      spawnEnemy(false);
+      const e = enemies[enemies.length - 1];
+      if(!e) continue;
+      e.x = x;
+      e.y = y;
+      e.clusterZone = zone.id;
+      e.clusterIdle = true;
+      e.clusterInner = !!isInner;
+      e.clusterAggro = false;
+    }
+  }
+
+  function updateLevel11Zones(dt, elapsed){
+    if(!level11Active || !level11Zones.length) return;
+
+    for(const zone of level11Zones){
+      const m = manholes[zone.manholeIndex];
+      if(!m) continue;
+
+      if(!zone.activated){
+        // Check if player enters aggression zone around corpse
+        const dx = player.x - zone.corpseX;
+        const dy = player.y - zone.corpseY;
+        if(dx*dx + dy*dy <= zone.aggroR * zone.aggroR){
+          zone.activated = true;
+          zone.triggeredAt = elapsed;
+          // All cluster mice from this zone wake up and start attacking
+          for(const e of enemies){
+            if(e && e.clusterZone === zone.id){
+              e.clusterIdle = false;
+              e.clusterAggro = true;
+            }
+          }
+          showSimpleToast("Cluster sighted — clear the zone!");
+          showTutorial("manhole", "Manholes spawn enemies. Clear the zone and seal the manhole to stop the threat.", m.x, m.y);
+        }
+      }
+
+      if(zone.activated && !zone.closed){
+        const since = zone.triggeredAt != null ? (elapsed - zone.triggeredAt) : 0;
+
+        // Spawn regular enemies from this manhole for a short period
+        if(!zone.spawnsStopped){
+          const spawnRate = 0.7; // enemies per second while active
+          zone.spawnAcc += spawnRate * dt;
+          while(zone.spawnAcc >= 1){
+            zone.spawnAcc -= 1;
+            const elite = Math.random() < 0.12;
+            spawnEnemy(elite);
+            const e = enemies[enemies.length - 1];
+            if(e){
+              const angle = Math.random() * Math.PI * 2;
+              const dist = m.r + 22 * DPR;
+              e.x = m.x + Math.cos(angle) * dist;
+              e.y = m.y + Math.sin(angle) * dist;
+              e.clusterZone = zone.id;
+              e.clusterAggro = true;
+            }
+          }
+        }
+
+        // After delay: spawn one miniboss from this manhole and stop further spawns
+        if(!zone.minibossSpawned && since >= LEVEL11_MINIBOSS_DELAY_SEC){
+          zone.minibossSpawned = true;
+          zone.spawnsStopped = true;
+          spawnBoss(true);
+          const boss = enemies[enemies.length - 1];
+          if(boss){
+            boss.x = m.x;
+            boss.y = m.y;
+            boss.clusterZone = zone.id;
+            boss.clusterAggro = true;
+          }
+          showTutorial("miniboss", "A mini-boss has appeared! Defeat it, then seal the manhole.", m.x, m.y);
+        }
+      }
+    }
+
+    // Arrow timer (blink next target for a few seconds, with optional delay)
+    if(level11Arrow){
+      level11Arrow.t += dt;
+      const delay = level11Arrow.delay || 0;
+      const life = level11Arrow.life || 4;
+      if(level11Arrow.t >= delay + life){
+        level11Arrow = null;
+      }
+    }
+
+    // Handle welding interaction (similar to blood sample collection)
+    updateLevel11Weld(dt, elapsed);
+
+    // Handle boss warning + spawn sequence after all manholes are sealed
+    updateLevel11BossPhase(dt);
+  }
+
+  function updateLevel11Weld(dt, elapsed){
+    if(!level11Active || !level11Zones.length) return;
+
+    const weldR = LEVEL11_WELD_RADIUS * DPR;
+    let candidate = null;
+
+    for(const zone of level11Zones){
+      if(!zone.activated || zone.closed) continue;
+
+      // Zone must be cleared of its own enemies before welding
+      let hasZoneEnemies = false;
+      for(const e of enemies){
+        if(!e) continue;
+        if(e.clusterZone === zone.id){
+          hasZoneEnemies = true;
+          break;
+        }
+      }
+      if(hasZoneEnemies) continue;
+
+      const m = manholes[zone.manholeIndex];
+      if(!m) continue;
+      const dx = player.x - m.x;
+      const dy = player.y - m.y;
+      const d2 = dx*dx + dy*dy;
+      if(d2 <= weldR * weldR){
+        candidate = zone;
+        break;
+      }
+    }
+
+    if(!candidate){
+      level11WeldingZoneId = null;
+      level11WeldMs = 0;
+      return;
+    }
+
+    if(level11WeldingZoneId !== candidate.id){
+      level11WeldingZoneId = candidate.id;
+      level11WeldMs = 0;
+    }
+
+    // Pause welding during compare/menus
+    if(inCompare || paused || victoryPhase) return;
+
+    level11WeldMs += dt * 1000;
+    if(level11WeldMs >= LEVEL11_WELD_DURATION_SEC * 1000){
+      candidate.closed = true;
+      level11ZonesCleared++;
+      if(level11ZonesCleared > level11Zones.length) level11ZonesCleared = level11Zones.length;
+      level11WeldingZoneId = null;
+      level11WeldMs = 0;
+
+      // Mark underlying manhole as closed and spawn a small ring effect
+      const manhole = manholes[candidate.manholeIndex];
+      if(manhole){
+        manhole.closed = true;
+        levelUpRings.push({
+          x: manhole.x,
+          y: manhole.y,
+          r: 0,
+          maxR: manhole.r * 2.6,
+          life: 0.6,
+          t: 0
+        });
+      }
+
+      // Notification
+      showSimpleToast("Manhole Sealed");
+
+      // Point towards nearest next zone (unsealed manhole) for a few seconds
+      let next = null;
+      let bestD2 = Infinity;
+      if(level11ZonesCleared < level11Zones.length){
+        const srcManhole = manhole;
+        if(srcManhole){
+          for(const z of level11Zones){
+            if(z.closed) continue;
+            const mz = manholes[z.manholeIndex];
+            if(!mz) continue;
+            const dx = mz.x - srcManhole.x;
+            const dy = mz.y - srcManhole.y;
+            const d2 = dx*dx + dy*dy;
+            if(d2 < bestD2){
+              bestD2 = d2;
+              next = z;
+            }
+          }
+        }
+      }
+      if(next){
+        const m2 = manholes[next.manholeIndex];
+        if(m2){
+          // Arrow: 1s delay, then blink for 4s pointing from player towards next manhole.
+          level11Arrow = { targetX: m2.x, targetY: m2.y, t: 0, life: 4, delay: 1 };
+        }
+      }
+
+      // If this was the last manhole, start boss warning sequence
+      if(level11ZonesCleared === level11Zones.length && level11Zones.length > 0 && !level11BossPhase){
+        level11BossPhase = "warnDelay";
+        level11BossPhaseMs = 0;
+      }
+    }
+  }
+
+  function updateLevel11BossPhase(dt){
+    if(!level11Active || !level11Zones.length) return;
+    if(level11ZonesCleared < level11Zones.length) return;
+    if(!level11BossPhase) return;
+
+    level11BossPhaseMs += dt;
+
+    if(level11BossPhase === "warnDelay" && level11BossPhaseMs >= 5){
+      level11BossPhase = "warned";
+      level11BossPhaseMs = 0;
+      if(bossBanner){
+        bossBanner.textContent = "⚠️ BOSS INCOMING! ⚠️";
+        bossBanner.classList.remove("show"); void bossBanner.offsetWidth;
+        bossBanner.classList.add("show");
+      }
+      bossApproachSound();
+      return;
+    }
+
+    if(level11BossPhase === "warned" && level11BossPhaseMs >= 5){
+      level11BossPhase = "spawned";
+      level11BossPhaseMs = 0;
+      // Spawn main boss and then hand control back to endless spawn system
+      spawnBoss(false);
+      const mainBoss = enemies[enemies.length - 1];
+      if(mainBoss) showTutorial("boss", "The boss has appeared! Defeat it to enable extraction.", mainBoss.x, mainBoss.y);
+      level11Active = false; // re-enable global endless spawns and wave bosses
+    }
   }
 
   // ========= HUD =========
@@ -3080,6 +3662,11 @@
     const elapsed = gameTime;
     const lvl = currentLevelConfig || getLevelConfig("1-1");
     const roundSeconds = lvl.roundSeconds;
+
+    // Level 1-1: update manhole zones (aggression, spawns, miniboss timers, welding)
+    if(level11Active){
+      updateLevel11Zones(dt, elapsed);
+    }
 
     // Extraction countdown: when X pressed, count down; at 0 and alive → liftoff
     if(extractionCountdown!=null){
@@ -3215,7 +3802,9 @@
     }
 
     // Endless: miniboss every 20s; every 3rd = boss. Warning ~2s before (always run when ENDLESS_RUN).
-    if(!practice && (ENDLESS_RUN || !TEST_SINGLE_MOB_MODE)){
+    // For level 1-1, we only want the boss to spawn after all manholes are sealed,
+    // so we disable the normal wave-based boss/miniboss logic entirely there.
+    if(!practice && (!level11Active && !(currentLevelConfig && currentLevelConfig.id === "1-1")) && (ENDLESS_RUN || !TEST_SINGLE_MOB_MODE)){
       if(ENDLESS_RUN){
         const currentWave = Math.floor(elapsed / 20);
         const nextWave = Math.max(1, lastSpawnedMinibossMinute + 1);
@@ -3312,21 +3901,23 @@
     }
 
     // spawning: endless = 20% more mobs per 20s (rate × 1.2^wave); mobs get 1.2^wave HP/speed/dmg
-    if(ENDLESS_RUN || !roundEnd){
-      if(ENDLESS_RUN || !TEST_SINGLE_MOB_MODE){
-        if(ENDLESS_RUN){
-          const baseRate = 0.47;
-          const spawnsPerSec = baseRate * getWaveScale();
-          spawnAcc += Math.min(2, spawnsPerSec) * dt;
-        } else {
-          threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
-          const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
-          spawnAcc += baseRate * threat * 0.45 * dt;
-        }
-        while(spawnAcc>=1){
-          spawnAcc -= 1;
-          const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
-          spawnEnemy(Math.random()<eliteChance);
+    if(!level11Active){
+      if(ENDLESS_RUN || !roundEnd){
+        if(ENDLESS_RUN || !TEST_SINGLE_MOB_MODE){
+          if(ENDLESS_RUN){
+            const baseRate = 0.47;
+            const spawnsPerSec = baseRate * getWaveScale();
+            spawnAcc += Math.min(2, spawnsPerSec) * dt;
+          } else {
+            threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
+            const baseRate = (0.26 + elapsed/75) * (lvl.spawnScale || 1);
+            spawnAcc += baseRate * threat * 0.45 * dt;
+          }
+          while(spawnAcc>=1){
+            spawnAcc -= 1;
+            const eliteChance = clamp(0.02 + elapsed/110, 0.02, 0.12);
+            spawnEnemy(Math.random()<eliteChance);
+          }
         }
       }
     }
@@ -3408,10 +3999,20 @@
     // enemies move + collision
     for(const e of enemies){
       if(!e || typeof e.x !== "number" || typeof e.y !== "number") continue;
+
+      const isClusterIdle = level11Active && e.clusterZone != null && !e.clusterAggro;
+      if(isClusterIdle){
+        // Cluster mice for level 1-1 stay on their corpse until their zone is triggered
+        if(e.hitFlash>0) e.hitFlash-=dt;
+        continue;
+      }
+
       // Move enemy toward player (with slow aura)
       const dx0 = player.x - e.x, dy0 = player.y - e.y;
       const d0 = Math.hypot(dx0,dy0) || 1;
       let sp = e.sp;
+      // 1-1: fastest mice never faster than character — cap just below player speed
+      if(lvl.id === "1-1" && sp > player.moveSpeed * DPR) sp = player.moveSpeed * DPR * 0.99;
       if(aura>0 && (dx0*dx0+dy0*dy0)<auraR2) sp *= (1-aura);
       e.x += (dx0/d0)*sp*dt;
       e.y += (dy0/d0)*sp*dt;
@@ -3856,20 +4457,215 @@
   function drawMallProps(){
     ctx.save();
     for (const p of mallProps) {
+      const x = p.x, y = p.y, w = p.w, h = p.h;
+      if(p.kind && p.kind !== "shop"){
+        // Non-shop props: benches, pots, large plants
+        if(p.kind === "bench"){
+          const seatH = h * 0.25;
+          const backH = h * 0.25;
+          const seatY = y + h - seatH - 4*DPR;
+          const backY = seatY - backH;
+          // Bench back
+          ctx.fillStyle = "rgba(90,70,50,0.96)";
+          ctx.strokeStyle = "rgba(30,22,15,0.9)";
+          ctx.lineWidth = 2 * DPR;
+          roundRect(x + 4*DPR, backY, w - 30*DPR, backH, 4*DPR);
+          ctx.fill();
+          ctx.stroke();
+          // Bench seat
+          ctx.fillStyle = "rgba(130,95,60,0.98)";
+          roundRect(x + 4*DPR, seatY, w - 30*DPR, seatH, 4*DPR);
+          ctx.fill();
+          // Legs
+          ctx.fillStyle = "rgba(20,16,12,0.9)";
+          const legW = 6*DPR, legH = seatH*0.7;
+          ctx.fillRect(x + 10*DPR, seatY + seatH - 2*DPR, legW, legH);
+          ctx.fillRect(x + w - 10*DPR - legW, seatY + seatH - 2*DPR, legW, legH);
+          // Trash can at one end
+          const binW = 20*DPR, binH = h * 0.7;
+          const binX = x + w - binW - 4*DPR;
+          const binY = y + h - binH - 2*DPR;
+          const binGrad = ctx.createLinearGradient(binX, binY, binX, binY + binH);
+          binGrad.addColorStop(0, "rgba(60,70,80,0.98)");
+          binGrad.addColorStop(1, "rgba(30,34,40,0.98)");
+          ctx.fillStyle = binGrad;
+          roundRect(binX, binY, binW, binH, 5*DPR);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(200,220,255,0.5)";
+          ctx.lineWidth = 1 * DPR;
+          ctx.beginPath();
+          ctx.moveTo(binX + 4*DPR, binY + 8*DPR);
+          ctx.lineTo(binX + binW - 4*DPR, binY + 8*DPR);
+          ctx.stroke();
+          ctx.font = `${10*DPR}px ui-sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "rgba(220,230,240,0.95)";
+          ctx.fillText("🗑️", binX + binW/2, binY + binH*0.45);
+        } else if(p.kind === "flowerPotSmall"){
+          // Small flower pot (1×1 tile)
+          const potH = h * 0.4;
+          const potY = y + h - potH;
+          const potGrad = ctx.createLinearGradient(x, potY, x, potY + potH);
+          potGrad.addColorStop(0, "rgba(140,90,55,0.98)");
+          potGrad.addColorStop(1, "rgba(90,60,35,0.98)");
+          ctx.fillStyle = potGrad;
+          roundRect(x + 4*DPR, potY, w - 8*DPR, potH, 5*DPR);
+          ctx.fill();
+          // Soil
+          ctx.fillStyle = "rgba(40,26,18,0.95)";
+          roundRect(x + 5*DPR, potY - 4*DPR, w - 10*DPR, 6*DPR, 4*DPR);
+          ctx.fill();
+          // Flowers/leaves
+          const cx = x + w/2;
+          const cy = potY - 6*DPR;
+          ctx.fillStyle = "rgba(70,150,85,0.96)";
+          ctx.beginPath();
+          ctx.arc(cx, cy, w*0.3, 0, Math.PI*2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255,210,120,0.96)";
+          ctx.beginPath();
+          ctx.arc(cx, cy, w*0.14, 0, Math.PI*2);
+          ctx.fill();
+        } else if(p.kind === "plantLarge"){
+          // Large planter with lots of leaves (2×2 tiles)
+          const potH = h * 0.35;
+          const potY = y + h - potH;
+          ctx.fillStyle = "rgba(60,60,65,0.98)";
+          roundRect(x + 6*DPR, potY, w - 12*DPR, potH, 8*DPR);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(210,220,230,0.28)";
+          ctx.lineWidth = 1.5*DPR;
+          ctx.beginPath();
+          ctx.moveTo(x + 10*DPR, potY + 8*DPR);
+          ctx.lineTo(x + w - 10*DPR, potY + 8*DPR);
+          ctx.stroke();
+          // Dense leaves above
+        const cx = x + w/2;
+        const baseY = potY - 6*DPR;
+        const leafR = Math.min(w, h) * 0.35;
+        const leafColors = ["rgba(50,135,80,0.98)","rgba(40,115,70,0.96)","rgba(30,95,60,0.96)"];
+        const leaves = Array.isArray(p.leaves) && p.leaves.length ? p.leaves : [
+          { ang: 0, mul: 0.9 },
+          { ang: Math.PI*0.35, mul: 0.8 },
+          { ang: Math.PI*0.7, mul: 1.0 },
+          { ang: Math.PI*1.05, mul: 0.75 },
+          { ang: Math.PI*1.4, mul: 0.85 },
+          { ang: Math.PI*1.75, mul: 0.95 },
+          { ang: Math.PI*2.1, mul: 0.7 },
+        ];
+        for(let i=0;i<leaves.length;i++){
+          const cfg = leaves[i];
+          const ang = cfg.ang;
+          const r = leafR * cfg.mul;
+          const lx = cx + Math.cos(ang)*r*0.5;
+          const ly = baseY + Math.sin(ang)*r*0.4;
+          ctx.fillStyle = leafColors[i % leafColors.length];
+          ctx.beginPath();
+          ctx.ellipse(lx, ly, r*0.55, r*0.9, ang, 0, Math.PI*2);
+          ctx.fill();
+        }
+        }
+        continue;
+      }
+      // Shops
+      const roofH = h * 0.22;
+      const facadeY = y + roofH;
+      const facadeH = h - roofH;
+
+      // Building base (walls)
       ctx.fillStyle = p.fill;
       ctx.strokeStyle = p.stroke;
-      ctx.lineWidth = 2 * DPR;
-      roundRect(p.x, p.y, p.w, p.h, 6 * DPR);
+      ctx.lineWidth = 3 * DPR;
+      roundRect(x, y, w, h, 10 * DPR);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "rgba(0,0,0,0.25)";
-      roundRect(p.x + 4*DPR, p.y + 4*DPR, p.w - 8*DPR, p.h - 8*DPR, 4 * DPR);
+
+      // Roof
+      ctx.save();
+      ctx.fillStyle = "rgba(12,10,8,0.95)";
+      roundRect(x, y, w, roofH, 10 * DPR);
       ctx.fill();
-      ctx.font = `${Math.min(24, p.h * 0.5)}px ui-sans-serif`;
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 1.5 * DPR;
+      ctx.beginPath();
+      ctx.moveTo(x + 6*DPR, y + roofH - 3*DPR);
+      ctx.lineTo(x + w - 6*DPR, y + roofH - 3*DPR);
+      ctx.stroke();
+      ctx.restore();
+
+      // Glass facade
+      const glassTop = facadeY + 6*DPR;
+      const glassH = facadeH - 18*DPR;
+      const glassW = w - 16*DPR;
+      const gx = x + 8*DPR;
+      const gy = glassTop;
+      const glassGrad = ctx.createLinearGradient(gx, gy, gx, gy + glassH);
+      glassGrad.addColorStop(0, "rgba(190,230,255,0.85)");
+      glassGrad.addColorStop(0.4, "rgba(130,190,230,0.75)");
+      glassGrad.addColorStop(1, "rgba(60,100,140,0.85)");
+      ctx.fillStyle = glassGrad;
+      roundRect(gx, gy, glassW, glassH, 8 * DPR);
+      ctx.fill();
+      // Vertical mullions
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.lineWidth = 1.2 * DPR;
+      const cols = 4;
+      for(let i=1;i<cols;i++){
+        const cx = gx + (glassW * i/cols);
+        ctx.beginPath();
+        ctx.moveTo(cx, gy + 4*DPR);
+        ctx.lineTo(cx, gy + glassH - 4*DPR);
+        ctx.stroke();
+      }
+      // Horizontal mullion
+      ctx.beginPath();
+      ctx.moveTo(gx + 4*DPR, gy + glassH*0.55);
+      ctx.lineTo(gx + glassW - 4*DPR, gy + glassH*0.55);
+      ctx.stroke();
+
+      // Door (simple darker glass panel in midten)
+      const doorW = Math.min(46*DPR, glassW * 0.22);
+      const doorH = glassH * 0.65;
+      const doorX = x + w*0.5 - doorW/2;
+      const doorY = gy + glassH - doorH - 4*DPR;
+      const doorGrad = ctx.createLinearGradient(doorX, doorY, doorX, doorY + doorH);
+      doorGrad.addColorStop(0, "rgba(170,220,255,0.95)");
+      doorGrad.addColorStop(1, "rgba(80,130,180,0.95)");
+      ctx.fillStyle = doorGrad;
+      roundRect(doorX, doorY, doorW, doorH, 6 * DPR);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.lineWidth = 1 * DPR;
+      ctx.beginPath();
+      ctx.moveTo(doorX + doorW*0.5, doorY + 6*DPR);
+      ctx.lineTo(doorX + doorW*0.5, doorY + doorH - 6*DPR);
+      ctx.stroke();
+
+      // Sign with icon + name
+      const signW = Math.min(w * 0.65, 220 * DPR);
+      const signH = roofH * 0.55;
+      const signX = x + w*0.5 - signW/2;
+      const signY = y + roofH*0.15;
+      const signGrad = ctx.createLinearGradient(signX, signY, signX, signY + signH);
+      signGrad.addColorStop(0, "rgba(20,20,26,0.96)");
+      signGrad.addColorStop(1, "rgba(55,65,80,0.96)");
+      ctx.fillStyle = signGrad;
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.lineWidth = 1.6 * DPR;
+      roundRect(signX, signY, signW, signH, 999);
+      ctx.fill();
+      ctx.stroke();
+
+      const name = String(p.type || "").toUpperCase();
+      ctx.font = `${11*DPR}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "#fff";
-      ctx.fillText(p.sign, p.x + p.w/2, p.y + p.h/2);
+      ctx.fillStyle = "rgba(240,245,255,0.96)";
+      const textX = signX + signW*0.5;
+      const textY = signY + signH*0.5;
+      const label = `${p.sign || ""} ${name}`.trim();
+      ctx.fillText(label, textX, textY);
     }
     ctx.restore();
   }
@@ -3878,21 +4674,25 @@
     ctx.save();
     for (const m of manholes) {
       const r = m.r;
-      ctx.fillStyle = "#3a3632";
-      ctx.strokeStyle = "#5c5750";
+      const isClosed = !!m.closed;
+      // Outer ring
+      ctx.fillStyle = isClosed ? "#254026" : "#3a3632";
+      ctx.strokeStyle = isClosed ? "#5e9b60" : "#5c5750";
       ctx.lineWidth = 3 * DPR;
       ctx.beginPath();
       ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#2a2824";
+      // Inner disc
+      ctx.fillStyle = isClosed ? "#1b2f1d" : "#2a2824";
       ctx.beginPath();
       ctx.arc(m.x, m.y, r * 0.88, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#4a4540";
+      ctx.strokeStyle = isClosed ? "#6ecf73" : "#4a4540";
       ctx.lineWidth = 1.5 * DPR;
       ctx.stroke();
-      ctx.fillStyle = "#1e1c1a";
+      // Center plug
+      ctx.fillStyle = isClosed ? "#142015" : "#1e1c1a";
       ctx.beginPath();
       ctx.arc(m.x, m.y, r * 0.5, 0, Math.PI * 2);
       ctx.fill();
@@ -3903,6 +4703,18 @@
   const DOOR_W = 56 * DPR;
   const DOOR_H = 90 * DPR;
   const DOOR_INSET = 40 * DPR;
+  function drawBlackOutsideMap(){
+    const pad = 1e4;
+    ctx.save();
+    ctx.fillStyle = "#000";
+    ctx.globalAlpha = 1;
+    ctx.fillRect(-pad, -pad, pad, mapH + pad);           // left
+    ctx.fillRect(mapW, -pad, pad, mapH + pad);          // right
+    ctx.fillRect(0, -pad, mapW, pad);                    // top
+    ctx.fillRect(0, mapH, mapW, pad);                    // bottom
+    ctx.restore();
+  }
+
   function drawDoors(){
     ctx.save();
     const d = DOOR_INSET;
@@ -3929,6 +4741,19 @@
   }
 
   function render(){
+    // Tutorial countdown tick (runs every frame while countdown active)
+    if(tutorialCountdown !== null){
+      if(now() >= tutorialCountdownEndT){
+        tutorialCountdown--;
+        tutorialCountdownEndT = now() + 1;
+        if(tutorialCountdown <= 0){
+          tutorialCountdown = null;
+          paused = false;
+          tLast = now();
+        }
+      }
+    }
+
     ctx.clearRect(0,0,W,H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
@@ -3967,6 +4792,7 @@
         drawManholes();
         drawMallProps();
         drawDoors();
+        drawBlackOutsideMap();
       }
       for(const L of lootDrops) drawLoot(L);
       for(const p of bloodPools) drawBloodPool(p);
@@ -4004,6 +4830,7 @@
       }
       for(const ring of levelUpRings) drawLevelUpRing(ring);
       drawBloodGatherBar();
+      drawLevel11WeldBar();
       for(const p of extractionRocketParticles){
         const t=p.t/p.life;
         ctx.save();
@@ -4017,13 +4844,8 @@
         ctx.restore();
       }
       ctx.restore();
-      ctx.save();
-      ctx.translate(W*0.5, H*0.5);
-      ctx.scale(playerScale, playerScale);
-      ctx.translate(-W*0.5, -H*0.5);
-      ctx.translate(W*0.5 - player.x, H*0.5 - player.y);
-      drawPlayer();
-      ctx.restore();
+      // Draw extraction sprite centered on screen (screen-space), on top of world
+      drawExtractionSpriteScreenCenter();
     } else {
       ctx.save();
       ctx.translate(camOffsetX, camOffsetY);
@@ -4033,6 +4855,7 @@
         drawManholes();
         drawMallProps();
         drawDoors();
+        drawBlackOutsideMap();
       }
       for(const L of lootDrops) drawLoot(L);
       for(const p of bloodPools) drawBloodPool(p);
@@ -4042,9 +4865,18 @@
       for(const p of particles) drawParticle(p);
       for(const ring of levelUpRings) drawLevelUpRing(ring);
       drawBloodGatherBar();
+      drawLevel11WeldBar();
       if(deathSequence) drawCorpse(); else drawPlayer();
       for(const pop of tokenPops) drawTokenPop(pop);
       ctx.restore();
+    }
+
+    // Level 1-1: permanent sealed counter (1/6 … 6/6) + arrow to next/miniboss manhole
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones.length > 0){
+      drawLevel11StatusHUD();
+    }
+    if((level11Active || (currentLevelConfig && currentLevelConfig.id === "1-1")) && level11Arrow){
+      drawLevel11ArrowIndicator();
     }
 
     if(extractionCountdown!=null && extractionCountdown>0){
@@ -4077,6 +4909,41 @@
       ctx.fillStyle="rgba(234,242,255,0.9)";
       ctx.shadowBlur=0;
       ctx.fillText("Collect XP — press M or Esc for menu", W/2, H*0.42);
+      ctx.restore();
+    }
+
+    // Tutorial overlay: dim game and highlight ring at focus (screen space)
+    if(tutorialOverlay){
+      const camOffsetX = W*0.5 - player.x;
+      const camOffsetY = H*0.5 - player.y;
+      const sx = camOffsetX + tutorialOverlay.focusX;
+      const sy = camOffsetY + tutorialOverlay.focusY;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = "rgba(255,220,80,0.95)";
+      ctx.lineWidth = 4 * DPR;
+      ctx.shadowColor = "rgba(255,200,50,0.9)";
+      ctx.shadowBlur = 24 * DPR;
+      const ringR = 48 * DPR;
+      ctx.beginPath();
+      ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Tutorial countdown 3-2-1
+    if(tutorialCountdown !== null && tutorialCountdown > 0){
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.font = `bold ${Math.min(120, W/5)}px ui-sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,240,180,0.98)";
+      ctx.shadowColor = "rgba(255,200,80,0.9)";
+      ctx.shadowBlur = 20 * DPR;
+      ctx.fillText(String(tutorialCountdown), W/2, H/2);
       ctx.restore();
     }
   }
@@ -4145,24 +5012,8 @@
     const t=now()*0.001;
 
     if(extractionLiftoff){
-      const size = player.r * 16;
-      const w = size, h = size;
-      const extractionImg = playerSprites.extraction;
-      ctx.save();
-      ctx.globalAlpha = 1;
-      if(extractionImg && extractionImg.complete && extractionImg.naturalWidth>0){
-        ctx.drawImage(extractionImg, player.x - w/2, player.y - h/2, w, h);
-      } else {
-        const bodyGrad = ctx.createRadialGradient(player.x - player.r*0.4, player.y - player.r*0.5, 2, player.x, player.y, player.r*1.6);
-        bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
-        bodyGrad.addColorStop(0.5, "rgba(200,220,255,0.9)");
-        bodyGrad.addColorStop(1, "rgba(80,120,180,0.9)");
-        ctx.fillStyle = bodyGrad;
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
-        ctx.fill();
-      }
-      ctx.restore();
+      // During extraction we draw the sprite in a dedicated screen-space helper.
+      drawExtractionSpriteScreenCenter();
       return;
     }
 
@@ -4499,6 +5350,70 @@
     }
   }
 
+  function drawExtractionSpriteScreenCenter(){
+    const extractionImg = playerSprites.extraction;
+    const idle = playerSprites.frontIdle || (playerSprites.front && playerSprites.front[0]);
+    const img = (extractionImg && extractionImg.complete && extractionImg.naturalWidth>0)
+      ? extractionImg
+      : (idle && idle.complete && idle.naturalWidth>0 ? idle : null);
+    const baseSize = 0.5 * Math.min(W, H);
+    const size = Math.max(160 * DPR, baseSize);
+    const w = size, h = size;
+    const cx = W * 0.5;
+    const cy = H * 0.5;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    if(img){
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, cx - w/2, cy - h/2, w, h);
+    } else {
+      const bodyGrad = ctx.createRadialGradient(cx - size*0.15, cy - size*0.2, 4, cx, cy, size*0.6);
+      bodyGrad.addColorStop(0, "rgba(255,255,255,0.95)");
+      bodyGrad.addColorStop(0.5, "rgba(200,220,255,0.9)");
+      bodyGrad.addColorStop(1, "rgba(80,120,180,0.9)");
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, size*0.35, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawLevel11WeldBar(){
+    if(!level11Active || level11WeldingZoneId == null) return;
+    const zone = level11Zones.find(z => z.id === level11WeldingZoneId);
+    if(!zone) return;
+    const t = clamp(level11WeldMs / (LEVEL11_WELD_DURATION_SEC * 1000), 0, 1);
+    const bw = 72 * DPR;
+    const bh = 12 * DPR;
+    const x = player.x - bw / 2;
+    const y = player.y - player.r - 52 * DPR; // slightly above blood gather bar
+    const fillW = bw * (1 - t);
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "rgba(0,0,0,0.9)";
+      ctx.strokeStyle = "rgba(255,220,120,0.95)";
+      ctx.lineWidth = 3 * DPR;
+      roundRect(x, y, bw, bh, 999);
+      ctx.fill();
+      ctx.stroke();
+      if(fillW > 3 * DPR){
+        const innerW = fillW - 2 * DPR;
+        if(innerW > 0){
+          ctx.fillStyle = "rgba(255,210,80,0.98)";
+          roundRect(x + (bw - fillW), y + 2*DPR, innerW, bh - 4*DPR, 999);
+          ctx.fill();
+        }
+      }
+    } finally {
+      ctx.restore();
+      ctx.beginPath();
+    }
+  }
+
   function drawLevelUpRing(ring){
     const t = ring.t / ring.life;
     const alpha = 1 - t*t;
@@ -4566,6 +5481,83 @@
     ctx.beginPath();
     ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  function drawLevel11StatusHUD(){
+    if(!currentLevelConfig || currentLevelConfig.id !== "1-1" || !level11Zones || !level11Zones.length) return;
+    const text = `${level11ZonesCleared}/${level11Zones.length}`;
+    const padX = 10 * DPR;
+    const padY = 4 * DPR;
+    ctx.save();
+    ctx.font = `${11*DPR}px ui-sans-serif`;
+    const tw = ctx.measureText(text).width;
+    const bw = tw + padX * 2;
+    const bh = 18 * DPR;
+    const x = W * 0.5 - bw / 2;
+    const y = 12 * DPR;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 1.5 * DPR;
+    roundRect(x, y, bw, bh, 999);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, W * 0.5, y + bh / 2);
+    ctx.restore();
+  }
+
+  function drawLevel11ArrowIndicator(){
+    if(!level11Arrow) return;
+    const targetX = level11Arrow.targetX;
+    const targetY = level11Arrow.targetY;
+    const delay = level11Arrow.delay || 0;
+    const t = level11Arrow.t || 0;
+    if(t < delay) return; // wait 1s before showing arrow
+
+    const dxWorld = targetX - player.x;
+    const dyWorld = targetY - player.y;
+    if(!isFinite(dxWorld) || !isFinite(dyWorld)) return;
+    const dist = Math.hypot(dxWorld, dyWorld);
+    if(dist <= 1e-2) return;
+
+    const ang = Math.atan2(dyWorld, dxWorld);
+    const px = W * 0.5;
+    const py = H * 0.5;
+    const arrowLen = Math.min(dist * 0.5, 160 * DPR);
+
+    // Blink strength over lifetime (4s) – fades slightly towards the end
+    const age = t - delay;
+    const life = level11Arrow.life || 4;
+    const lifeFrac = Math.max(0, Math.min(1, age / life));
+    const blinkBase = 0.5 + 0.5 * Math.sin(now() * 10);
+    const alpha = (0.6 + 0.4 * blinkBase) * (1 - 0.2 * lifeFrac);
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.translate(px, py);
+    ctx.rotate(ang);
+
+    const size = 32 * DPR;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(255,240,160,0.98)";
+    ctx.shadowColor = "rgba(255,240,160,0.95)";
+    ctx.shadowBlur = 14 * DPR;
+
+    // Draw a thick arrow starting at player center and pointing towards the manhole
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(arrowLen - size * 0.4, 0);
+    ctx.lineTo(arrowLen - size * 0.4, size * 0.35);
+    ctx.lineTo(arrowLen, 0);
+    ctx.lineTo(arrowLen - size * 0.4, -size * 0.35);
+    ctx.lineTo(arrowLen - size * 0.4, 0);
+    ctx.closePath();
+    ctx.fill();
+
     ctx.restore();
   }
 
