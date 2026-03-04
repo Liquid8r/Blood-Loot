@@ -1637,9 +1637,9 @@
     let finalSp = sp;
     const postBoss11 = currentLevelConfig && currentLevelConfig.id === "1-1" && level11BossPhase === "spawned";
     if(postBoss11){
-      finalHp *= 0.95;
-      contactDmg = Math.round(contactDmg * 0.95);
-      finalSp *= 0.95;
+      finalHp *= 0.75;
+      contactDmg = Math.round(contactDmg * 0.85);
+      finalSp *= 0.9;
     }
 
     enemies.push({
@@ -4051,7 +4051,7 @@
           if(ENDLESS_RUN){
             const baseRate = 0.47;
             let spawnsPerSec = baseRate * getWaveScale();
-            if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11BossPhase === "spawned") spawnsPerSec *= 0.95;
+            if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11BossPhase === "spawned") spawnsPerSec *= 0.72;
             spawnAcc += Math.min(2, spawnsPerSec) * dt;
           } else {
             threat = 1.0 + (elapsed*elapsed) / (lvl.threatDivisor || 1800);
