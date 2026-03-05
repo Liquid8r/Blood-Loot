@@ -783,7 +783,7 @@
   }
 
   // One-time reset: bump version to clear all progression for a clean release.
-  const AFFIXLOOT_STORAGE_VERSION = 4;
+  const AFFIXLOOT_STORAGE_VERSION = 5;
   (function resetProgressionIfNewVersion(){
     const key = "affixloot_storage_version";
     if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
