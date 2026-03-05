@@ -135,8 +135,8 @@
       opacity:.14; animation: shine 5.4s linear infinite;
     }
     @keyframes shine{ to{ transform: rotate(360deg);} }
-    .slotMiniMain{flex:1; min-width:0;}
-    .slotMiniTitle{font-weight:950; font-size:12px; letter-spacing:.25px; display:flex; justify-content:space-between; gap:10px;}
+    .slotMiniMain{flex:1; min-width:0; overflow:hidden;}
+    .slotMiniTitle{font-weight:950; font-size:12px; letter-spacing:.25px; display:flex; justify-content:space-between; gap:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
     .slotMiniSub{font-size:12px; color:var(--muted); margin-top:2px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 
     /* Toast */
@@ -156,6 +156,8 @@
       box-shadow: 0 14px 36px rgba(0,0,0,.44);
       display:flex; align-items:center; justify-content:space-between; gap:12px;
       animation: pop .22s ease-out, fade 2.9s ease-in forwards;
+      max-width:100%;
+      min-width:0;
     }
     @keyframes pop{ from{transform:translateY(-6px); opacity:0} to{transform:translateY(0); opacity:1} }
     @keyframes fade{ 0%,70%{opacity:1} 100%{opacity:0; transform:translateY(-6px)} }
@@ -880,6 +882,7 @@
     /* Compare UI */
     .ovGrid{display:grid; grid-template-columns: 1fr 1fr; gap:12px;}
     .ovGrid.ovGridCompare{ grid-template-columns: 1fr 1fr; gap:20px; max-width:900px; margin:0 auto; }
+    .ovGrid.ovGridCompare .compareCard{ max-width:100%; overflow:hidden; }
     @media (max-width: 900px){ .ovGrid{grid-template-columns:1fr;} .ovGrid.ovGridCompare{ grid-template-columns: 1fr; } }
     .compareCard{
       border-radius:16px;
@@ -903,8 +906,8 @@
     .cmpDiffLine{ font-size:13px; font-weight:800; }
     .cmpDiffGood{ color: var(--good); }
     .cmpDiffBad{ color: var(--bad); }
-    .cmpTop{display:flex; align-items:center; justify-content:space-between; gap:10px;}
-    .cmpName{font-weight:1000; letter-spacing:.2px; font-size:14px;}
+    .cmpTop{display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0;}
+    .cmpName{font-weight:1000; letter-spacing:.2px; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
     .cmpRar{
       font-weight:1000;
       padding:4px 10px; border-radius:999px;
@@ -930,9 +933,9 @@
       background: conic-gradient(from 180deg, rgba(255,255,255,0), rgba(255,255,255,.25), rgba(255,255,255,0));
       opacity:.16; animation: shine 4.8s linear infinite;
     }
-    .cmpText{flex:1; min-width:0;}
-    .cmpLine{font-size:12px; color:var(--muted); line-height:1.35;}
-    .pillRow{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
+    .cmpText{flex:1; min-width:0; overflow:hidden;}
+    .cmpLine{font-size:12px; color:var(--muted); line-height:1.35; word-break:break-word;}
+    .pillRow{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; word-break:break-word;}
     .pill{
       font-size:12px;
       padding:5px 8px;

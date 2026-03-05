@@ -77,7 +77,7 @@
   const hudQuestStatus = document.getElementById("hudQuestStatus");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.004.1";
+  const GAME_VERSION = "1.004.2";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -270,7 +270,9 @@
   /** When true, each new run counts as first-time: tutorial "seen" state is cleared at run start so tutorials show every run. */
   const DEV_TUTORIAL_EVERY_RUN = true;
   /** When true, start each run with a legendary weapon equipped (for testing). Disabled: use dev gift on 1-1 instead. */
-  const DEV_GIVE_LEGENDARY_WEAPON = false;
+  const DEV_GIVE_LEGENDARY_WEAPON = true;
+  /** When set, override token count to this value for testing (e.g. 100). Set to 0 or remove to use normal progression. */
+  const DEV_GIVE_TOKENS = 100;
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
   const ENDLESS_RUN = true;
 
@@ -742,6 +744,7 @@
 
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
+  if (typeof DEV_GIVE_TOKENS === "number" && DEV_GIVE_TOKENS > 0) tokens = DEV_GIVE_TOKENS;
   let skillLevels = (function(){
     try {
       const raw = localStorage.getItem("affixloot_skill_levels");
@@ -1662,6 +1665,15 @@
   }
 
   // ========= Enemies & Boss =========
+  /** Minimum distance from player for enemy spawns – player can move a bit before mice become a threat. */
+  const MIN_SPAWN_DIST_FROM_PLAYER = Math.max(260 * PX, (BASE.bulletSpeed * BASE.bulletLife) * PX * 1.12);
+  function ensureSpawnMinDistFromPlayer(x, y){
+    const dx = x - player.x, dy = y - player.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d >= MIN_SPAWN_DIST_FROM_PLAYER) return { x, y };
+    const scale = MIN_SPAWN_DIST_FROM_PLAYER / d;
+    return { x: player.x + dx * scale, y: player.y + dy * scale };
+  }
   function getRandomSpawnPoint(){
     const doorInset = 40 * PX;
     const jitter = 15 * PX;
@@ -1693,7 +1705,9 @@
   const CONTACT_DMG_ABS_CAP = 24;
 
   function spawnEnemy(isElite=false){
-    const { x, y } = getRandomSpawnPoint();
+    let { x, y } = getRandomSpawnPoint();
+    const out = ensureSpawnMinDistFromPlayer(x, y);
+    x = out.x; y = out.y;
 
     const scale = getWaveScale();
     const scaleSpeed = Math.min(scale, WAVE_SCALE_SPEED_CAP);
@@ -1739,7 +1753,9 @@
   const BASE_MOUSE_R = 13;
   // waveIndex = floor(gameTime/20). Miniboss = 3× size, 5× HP/dmg of smallest mob. Boss = 6× size, 20× HP/dmg.
   function spawnBoss(isMiniboss=false, waveIndex=null){
-    const { x, y } = getRandomSpawnPoint();
+    let { x, y } = getRandomSpawnPoint();
+    const out = ensureSpawnMinDistFromPlayer(x, y);
+    x = out.x; y = out.y;
 
     const w = typeof waveIndex === "number" && waveIndex >= 0 ? waveIndex : getWaveIndex();
     const scale = Math.min(Math.pow(1.2, w), WAVE_SCALE_DMG_CAP);
@@ -1795,7 +1811,9 @@
   }
 
   function spawnMegaBoss(){
-    const { x, y } = getRandomSpawnPoint();
+    let { x, y } = getRandomSpawnPoint();
+    const out = ensureSpawnMinDistFromPlayer(x, y);
+    x = out.x; y = out.y;
     const scale = Math.min(Math.pow(1.2, 7), WAVE_SCALE_DMG_CAP);
     const smallestMobHP = 18 * scale;
     const smallestMobDmg = 8 * scale;
@@ -3227,7 +3245,8 @@
     const margin = 80 * PX * mapScale;
     const manholeR = 32 * PX;
     const fountainCx = mapW / 2, fountainCy = mapH / 2;
-    const avoidR = ((80 * 1.4 * PX) + manholeR + 40 * PX) * mapScale;
+    const FOUNTAIN_MIN_SPAWN_DIST = 100 * PX;  // minimum 100px between fountain center and spawned geometry
+    const avoidR = Math.max(FOUNTAIN_MIN_SPAWN_DIST, ((80 * 1.4 * PX) + manholeR + 40 * PX) * mapScale);
     const MIN_MANHOLE_SEP = 70 * PX;
     manholes = [];
     for (let row = 0; row < 3; row++) {
@@ -3638,6 +3657,8 @@
               const dist = m.r + 22 * PX;
               e.x = m.x + Math.cos(angle) * dist;
               e.y = m.y + Math.sin(angle) * dist;
+              const pushed = ensureSpawnMinDistFromPlayer(e.x, e.y);
+              e.x = pushed.x; e.y = pushed.y;
               e.clusterZone = zone.id;
               e.clusterAggro = true;
             }
@@ -4218,11 +4239,11 @@
         beep({freq:620,dur:0.06,type:"triangle",gain:0.05,slide:1.4});
       }
       player.dashPending=false;
-    } else if(keys.has("space") && player.dashCD<=0 && !player.dashT){
+    } else if(keys.has("space") && player.dashCD<=0 && player.dashT<=0){
       player.dashPending=true;
     }
     if(player.dashT>0){
-      player.dashT-=dt;
+      player.dashT=Math.max(0, player.dashT-dt);
       speed=BASE.dashSpeed*PX;
       player.vx=player.dashIx*speed;
       player.vy=player.dashIy*speed;
@@ -4383,43 +4404,57 @@
     }
 
     // Blood pools: age in seconds; 0–10s = sampleable (red → dark); 10s = coagulated; remove after 20s
+    // Only one pool is "active" at a time (first one we're in range of, by array order); when it's done or we leave, next gets the bar
     const R = BLOOD_GATHER_RADIUS * PX;
+    const R2 = R * R;
     for (let i = bloodPools.length - 1; i >= 0; i--) {
       const pool = bloodPools[i];
       if (pool.gathered) {
+        if (gatheringPool === pool) gatheringPool = null;
         bloodPools.splice(i, 1);
         continue;
       }
       const ageMs = now() - pool.spawnT;
       const ageSec = ageMs / 1000;
       if (ageSec >= BLOOD_POOL_REMOVE_AFTER_SEC) {
+        if (gatheringPool === pool) gatheringPool = null;
         bloodPools.splice(i, 1);
         continue;
       }
       if (ageSec >= BLOOD_POOL_MAX_AGE_SEC) pool.expired = true;
       if (!pool.coagulated && ageSec >= BLOOD_COAGULATE_SEC) pool.coagulated = true;
-      if (!pool.coagulated || pool.expired) {
-        if (gatheringPool === pool) gatheringPool = null;
-        continue;
-      }
-      const d2 = dist2(pool.x, pool.y, player.x, player.y);
-      if (d2 < R * R) {
-        if (!gatheringPool || gatheringPool !== pool) {
+      if (gatheringPool === pool && (pool.expired || !pool.coagulated)) gatheringPool = null;
+    }
+    // Validate current gathering pool (still in list, still sampleable). Do NOT clear when out of range – timer resumes when we step back in.
+    if (gatheringPool) {
+      const inList = bloodPools.indexOf(gatheringPool) >= 0;
+      const sampleable = gatheringPool.coagulated && !gatheringPool.expired && !gatheringPool.gathered;
+      if (!inList || !sampleable) gatheringPool = null;
+    }
+    // If no active pool, pick the first (by array order) pool we're in range of that is sampleable
+    if (!gatheringPool) {
+      for (const pool of bloodPools) {
+        if (pool.gathered || pool.expired || !pool.coagulated) continue;
+        if (dist2(pool.x, pool.y, player.x, player.y) < R2) {
           gatheringPool = pool;
           gatheringAccumulatedMs = 0;
+          break;
         }
-        if (!inCompare && !paused) gatheringAccumulatedMs += dt * 1000;
-        if (gatheringAccumulatedMs >= BLOOD_GATHER_SEC * 1000) {
-          runBloodMl[pool.bloodTypeId] = (runBloodMl[pool.bloodTypeId] || 0) + pool.ml;
-          pool.gathered = true;
-          gatheringPool = null;
-          gatheringAccumulatedMs = 0;
-          showSimpleToast("Blood sample secured +" + pool.ml + " ml");
-          beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
-          setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
-        }
-      } else {
-        if (gatheringPool === pool) gatheringPool = null;
+      }
+    }
+    // Advance timer only while standing in the pool; when we leave, timer pauses and resumes when we re-enter (before coagulate)
+    const inRangeOfGathering = gatheringPool && dist2(gatheringPool.x, gatheringPool.y, player.x, player.y) < R2;
+    if (inRangeOfGathering && !inCompare && !paused) {
+      gatheringAccumulatedMs += dt * 1000;
+      if (gatheringAccumulatedMs >= BLOOD_GATHER_SEC * 1000) {
+        const pool = gatheringPool;
+        runBloodMl[pool.bloodTypeId] = (runBloodMl[pool.bloodTypeId] || 0) + pool.ml;
+        pool.gathered = true;
+        gatheringPool = null;
+        gatheringAccumulatedMs = 0;
+        showSimpleToast("Blood sample secured +" + pool.ml + " ml");
+        beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
+        setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
       }
     }
 
@@ -4964,15 +4999,21 @@
   const DOOR_W = 56 * PX;
   const DOOR_H = 90 * PX;
   const DOOR_INSET = 40 * PX;
-  function drawBlackOutsideMap(){
-    const pad = 1e4;
+  /** Draw black outside the map in screen space so edges stay sharp (no stretch/distortion). */
+  function drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, worldScale){
+    const scale = worldScale != null ? worldScale : 1;
+    const sx0 = camOffsetX + player.x * (1 - scale);
+    const sy0 = camOffsetY + player.y * (1 - scale);
+    const sMapW = mapW * scale;
+    const sMapH = mapH * scale;
     ctx.save();
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = "#000";
     ctx.globalAlpha = 1;
-    ctx.fillRect(-pad, -pad, pad, mapH + pad);           // left
-    ctx.fillRect(mapW, -pad, pad, mapH + pad);          // right
-    ctx.fillRect(0, -pad, mapW, pad);                    // top
-    ctx.fillRect(0, mapH, mapW, pad);                    // bottom
+    ctx.fillRect(0, 0, Math.max(0, sx0), H);
+    ctx.fillRect(Math.min(W, sx0 + sMapW), 0, Math.max(0, W - (sx0 + sMapW)), H);
+    ctx.fillRect(Math.max(0, sx0), 0, Math.min(W, sx0 + sMapW) - Math.max(0, sx0), Math.max(0, sy0));
+    ctx.fillRect(Math.max(0, sx0), Math.min(H, sy0 + sMapH), Math.min(W, sx0 + sMapW) - Math.max(0, sx0), Math.max(0, H - (sy0 + sMapH)));
     ctx.restore();
   }
 
@@ -5054,7 +5095,7 @@
         drawManholes();
         drawMallProps();
         drawDoors();
-        drawBlackOutsideMap();
+        drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, worldScale);
       }
       for(const L of lootDrops) drawLoot(L);
       for(const p of bloodPools) drawBloodPool(p);
@@ -5117,7 +5158,7 @@
         drawManholes();
         drawMallProps();
         drawDoors();
-        drawBlackOutsideMap();
+        drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, 1);
       }
       for(const L of lootDrops) drawLoot(L);
       for(const p of bloodPools) drawBloodPool(p);
@@ -5591,11 +5632,14 @@
 
   function drawBloodGatherBar(){
     if(!gatheringPool) return;
+    const R = BLOOD_GATHER_RADIUS * PX;
+    if(dist2(gatheringPool.x, gatheringPool.y, player.x, player.y) >= R * R) return;
     const t = clamp(gatheringAccumulatedMs / (BLOOD_GATHER_SEC * 1000), 0, 1);
     const bw = 72 * PX;
     const bh = 12 * PX;
-    const x = player.x - bw / 2;
-    const y = player.y - player.r - 32 * PX;
+    const poolR = gatheringPool.mainR != null ? gatheringPool.mainR : 14 * PX;
+    const x = gatheringPool.x - bw / 2;
+    const y = gatheringPool.y - poolR - 28 * PX;
     const fillW = bw * (1 - t);
     ctx.save();
     try {
@@ -5631,13 +5675,15 @@
     const maxSize = Math.max(160 * PX, baseSize);
     const runSize = 2 * (player && player.r != null ? player.r : 20) * PX;
     const minSize = Math.max(runSize, 48 * PX);
+    // Liftoff: start at a visible size (first frame), then grow to max per guidelines (easeIn)
+    const initialLiftoffSize = Math.max(100 * PX, Math.min(0.35 * maxSize, baseSize * 0.4));
     let size = maxSize;
     if (extractionLiftoff) {
       const ign = extractionLiftoff.ignitionDuration || 0;
       const liftDur = extractionLiftoff.duration - ign;
       const liftProgress = extractionLiftoff.t <= ign ? 0 : Math.min(1, (extractionLiftoff.t - ign) / liftDur);
       const easeIn = liftProgress * liftProgress;
-      size = minSize + (maxSize - minSize) * easeIn;
+      size = initialLiftoffSize + (maxSize - initialLiftoffSize) * easeIn;
     }
     const w = size, h = size;
     const cx = W * 0.5;
