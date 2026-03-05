@@ -1,17 +1,46 @@
 (() => {
+  // ========= Design resolution (all layout and canvas in this space; scaled to fit viewport) =========
+  const DESIGN_W = 1920;
+  const DESIGN_H = 1080;
+  const appEl = document.getElementById("app");
+
   // ========= Canvas =========
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
-  let W=0,H=0,DPR=1;
+  let W = DESIGN_W, H = DESIGN_H, DPR = 1;
+  /** 1 = one design-space pixel (all drawing uses PX so we can scale via ctx; DPR is only for buffer size) */
+  const PX = 1;
+  /** Current scale factor: app is scaled by this to fit viewport (letterbox/pillarbox) */
+  let appScale = 1;
+  /** Left/top offset of #app in viewport pixels (for converting pointer coords to design space) */
+  let appOffsetX = 0, appOffsetY = 0;
 
   function resize(){
     DPR = Math.max(1, Math.min(2.25, window.devicePixelRatio || 1));
-    W = Math.floor(innerWidth * DPR);
-    H = Math.floor(innerHeight * DPR);
-    canvas.width = W; canvas.height = H;
+    W = DESIGN_W;
+    H = DESIGN_H;
+    canvas.width = DESIGN_W * DPR;
+    canvas.height = DESIGN_H * DPR;
+    const vw = window.innerWidth || 1;
+    const vh = window.innerHeight || 1;
+    appScale = Math.min(vw / DESIGN_W, vh / DESIGN_H);
+    appOffsetX = (vw - DESIGN_W * appScale) / 2;
+    appOffsetY = (vh - DESIGN_H * appScale) / 2;
+    if (appEl) {
+      appEl.style.transform = `scale(${appScale})`;
+      appEl.style.left = `${appOffsetX}px`;
+      appEl.style.top = `${appOffsetY}px`;
+    }
   }
   addEventListener("resize", resize);
   resize();
+
+  /** Convert viewport (clientX/clientY) to design-space coordinates 0..DESIGN_W, 0..DESIGN_H */
+  function viewportToDesign(clientX, clientY) {
+    const x = (clientX - appOffsetX) / appScale;
+    const y = (clientY - appOffsetY) / appScale;
+    return { x, y };
+  }
 
   // ========= UI =========
   const overlay = document.getElementById("overlay");
@@ -48,7 +77,7 @@
   const hudQuestStatus = document.getElementById("hudQuestStatus");
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.004.0";
+  const GAME_VERSION = "1.004.1";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -257,6 +286,8 @@
 
   // ========= Quests / Contracts (grunnstruktur) =========
   const QUEST_STORAGE_KEY = "affixloot_quest_state";
+  /** Ved ny lagret progresjon: legg nøkkel her OG i applyCleanProgressionState() lenger nede. */
+  const PROGRESSION_KEYS = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills"];
   const QUEST_COOLDOWN_MS = 5 * 60 * 1000;
   const QUEST_DEFS = [
     {
@@ -699,16 +730,6 @@
     playerSprites.extraction = extractionImg;
   })();
 
-  // One-time reset: bump version to clear all progression for a clean release.
-  const AFFIXLOOT_STORAGE_VERSION = 2;
-  (function resetProgressionIfNewVersion(){
-    const key = "affixloot_storage_version";
-    if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
-    const toRemove = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills"];
-    for(const k of toRemove) try{ localStorage.removeItem(k); }catch(e){}
-    try{ localStorage.setItem(key, String(AFFIXLOOT_STORAGE_VERSION)); }catch(e){}
-  })();
-
   // Tutorial: first-time hints (persisted per id)
   const TUTORIAL_STORAGE_PREFIX = "affixloot_tutorial_";
   function getTutorialSeen(id){ try{ return localStorage.getItem(TUTORIAL_STORAGE_PREFIX + id) === "1"; }catch(e){ return false; } }
@@ -745,6 +766,32 @@
       return typeof o==="object" ? o : {};
     } catch(e){ return {}; }
   })();
+
+  /** Setter alle progresjonsvariabler til nullstate. Kalles ved reset. Ved ny progresjon: legg også til i PROGRESSION_KEYS og her. */
+  function applyCleanProgressionState(){
+    questState = { active: null, proposals: [], cooldownUntil: 0, completed: null };
+    hiBestTime = 0;
+    hiBestKills = 0;
+    unlockedLevels = ["1-1"];
+    tokens = 0;
+    skillLevels = {};
+    skillTreePurchased = {};
+    baseBloodMl = {};
+  }
+
+  // One-time reset: bump version to clear all progression for a clean release.
+  const AFFIXLOOT_STORAGE_VERSION = 4;
+  (function resetProgressionIfNewVersion(){
+    const key = "affixloot_storage_version";
+    if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
+    for(const k of PROGRESSION_KEYS) try{ localStorage.removeItem(k); }catch(e){}
+    try{
+      Object.keys(localStorage).filter(k => k.startsWith("affixloot_tutorial_")).forEach(k => localStorage.removeItem(k));
+    }catch(e){}
+    try{ localStorage.setItem(key, String(AFFIXLOOT_STORAGE_VERSION)); }catch(e){}
+    applyCleanProgressionState();
+  })();
+
   const BLOOD_EXCHANGE_ML_PER_TOKEN = 50;
   let runTotalXp = 0;
   let tokenBarProgress = 0; // 0..1000, grant 1 token at 1000 then reset
@@ -878,6 +925,22 @@
     }
     return pb;
   }
+  /** Warrior Core Systems: apply skill tree levels to stat bonuses (same formulas as describeCoreNode). */
+  function getWarriorBonuses(){
+    const w = { dmgPct:0, asPct:0, critAdd:0, critDmgPct:0, splashPct:0, pierceAdd:0, stunChance:0, stunDuration:0, obliterateChance:0, pierceDmgPct:0 };
+    const L = (id)=> Math.min(skillLevels[id]||0, (SKILL_TREES[0].nodes.find(n=>n.id===id)||{}).maxLevel || SKILL_TREE_MAX_LEVEL);
+    w.dmgPct += 10 * L("war_base");
+    w.asPct += 6 * L("war_rate");
+    w.critAdd += 0.03 * L("war_crit_chance");
+    w.critDmgPct += 0.25 * L("war_crit_dmg");
+    w.stunChance += 0.05 * L("war_stun_chance");
+    w.stunDuration = 0.6 + 0.25 * L("war_stun_duration");
+    w.pierceAdd += 0.08 * L("war_pierce_chance");
+    w.pierceDmgPct += 0.15 * L("war_pierce_dmg");
+    w.splashPct += 15 * L("war_splash");
+    w.obliterateChance += 0.02 * L("war_obliterate");
+    return w;
+  }
   function computeStats(eq){
     const s = {
       maxHP: BASE.hp,
@@ -891,6 +954,10 @@
       lifesteal: 0,
       pierce: 0,
       splash: 0,
+      stunChance: 0,
+      stunDuration: 0,
+      obliterateChance: 0,
+      pierceDmgMult: 1,
 
       moveSpeed: BASE.speed,
       pickup: 70,
@@ -930,6 +997,10 @@
     xpPct+=(pb.xpGain||0)/100;
     hpFlat+=pb.hpFlat||0; shieldFlat+=pb.shieldFlat||0; pickupFlat+=pb.pickup||0;
     pierceAdd+=pb.pierce||0; lootInvulnSec+=pb.lootInvuln||0;
+
+    const wb = getWarriorBonuses();
+    dmgPct += wb.dmgPct; asPct += wb.asPct; critAdd += wb.critAdd; critDmgPct += wb.critDmgPct;
+    splashPct += wb.splashPct; pierceAdd += wb.pierceAdd;
 
     const items=[eq.weapon,eq.armor,eq.ring1,eq.ring2,eq.jewel].filter(Boolean);
     for(const it of items){
@@ -975,6 +1046,10 @@
     s.xpGainPct += xpPct;
     s.xpGainPct = Math.max(0, s.xpGainPct);
     s.lootInvulnSec = Math.min(2, lootInvulnSec);
+    s.stunChance = wb.stunChance;
+    s.stunDuration = wb.stunDuration;
+    s.obliterateChance = wb.obliterateChance;
+    s.pierceDmgMult = 1 + wb.pierceDmgPct;
     return s;
   }
   function estimateDPS(s){
@@ -994,6 +1069,10 @@
     player.lifesteal=s.lifesteal;
     player.pierce=s.pierce;
     player.splash=s.splash;
+    player.stunChance=s.stunChance||0;
+    player.stunDuration=s.stunDuration||0;
+    player.obliterateChance=s.obliterateChance||0;
+    player.pierceDmgMult=s.pierceDmgMult!=null?s.pierceDmgMult:1;
 
     player.moveSpeed=s.moveSpeed;
     player.pickup=s.pickup;
@@ -1123,7 +1202,7 @@
     `;
     wrap.appendChild(bubble);
     tutorialBubbleEl = wrap;
-    document.body.appendChild(wrap);
+    (appEl || document.body).appendChild(wrap);
     const btn = wrap.querySelector("#tutorialGotIt");
     if(btn){
       const onKey = (ev) => {
@@ -1160,7 +1239,7 @@
     `;
     wrap.appendChild(bubble);
     level11ControlsWrap = wrap;
-    document.body.appendChild(wrap);
+    (appEl || document.body).appendChild(wrap);
     const btn = wrap.querySelector("#level11ControlsGotIt");
     if(btn){
       const onKey = (ev) => {
@@ -1483,7 +1562,7 @@
   function dropXP(x,y, elite=false, boss=false){
     const n = boss ? randi(6,10) : elite ? randi(3,5) : randi(1,2);
     for(let i=0;i<n;i++){
-      orbs.push({ x:x+rand(-10,10)*DPR, y:y+rand(-10,10)*DPR, r:(boss?7:elite?6:4)*DPR, vx:rand(-20,20)*DPR, vy:rand(-20,20)*DPR });
+      orbs.push({ x:x+rand(-10,10)*PX, y:y+rand(-10,10)*PX, r:(boss?7:elite?6:4)*PX, vx:rand(-20,20)*PX, vy:rand(-20,20)*PX });
     }
     while(orbs.length > MAX_ORBS) orbs.shift();
     showTutorial("xp_orb", "XP orbs grant experience. Collect them to level up and become stronger.", x, y);
@@ -1507,8 +1586,8 @@
     const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
     if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
     const item=makeItem(type,rarity);
-    const dropX = x+rand(-14,14)*DPR, dropY = y+rand(-14,14)*DPR;
-    lootDrops.push({ x:dropX, y:dropY, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
+    const dropX = x+rand(-14,14)*PX, dropY = y+rand(-14,14)*PX;
+    lootDrops.push({ x:dropX, y:dropY, r:12*PX, item, t:0, bob:rand(0,Math.PI*2) });
     while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
 
     showTutorial("item_drop", "Items drop from defeated enemies. Walk over them to pick up and compare with your current gear.", dropX, dropY);
@@ -1524,7 +1603,7 @@
     let rarity = rollRarity();
     if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
     const item = makeItem("weapon", rarity);
-    lootDrops.push({ x:x+rand(-14,14)*DPR, y:y+rand(-14,14)*DPR, r:12*DPR, item, t:0, bob:rand(0,Math.PI*2) });
+    lootDrops.push({ x:x+rand(-14,14)*PX, y:y+rand(-14,14)*PX, r:12*PX, item, t:0, bob:rand(0,Math.PI*2) });
     while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
     level11WeaponDropped = true;
   }
@@ -1575,7 +1654,7 @@
       showLevelUpToast(chosen.name, value);
       spawnLevelUpRing(player.x, player.y);
       levelUpExplosionSound();
-      splashDamage(player.x, player.y, getMinMobHP(), true, 600*DPR);
+      splashDamage(player.x, player.y, getMinMobHP(), true, 600*PX);
 
       player.dpsEst = estimateDPS(computeStats(equipped));
       recomputeBuild();
@@ -1584,18 +1663,18 @@
 
   // ========= Enemies & Boss =========
   function getRandomSpawnPoint(){
-    const doorInset = 40 * DPR;
-    const jitter = 15 * DPR;
+    const doorInset = 40 * PX;
+    const jitter = 15 * PX;
     const total = 4 + (manholes.length || 0);
     const pick = (Math.random() * total) | 0;
     if (pick < 4) {
-      if(pick===0) return { x: mapW/2 + rand(-jitter,jitter), y: doorInset + 8*DPR };
-      if(pick===1) return { x: mapW/2 + rand(-jitter,jitter), y: mapH - doorInset - 8*DPR };
-      if(pick===2) return { x: doorInset + 8*DPR, y: mapH/2 + rand(-jitter,jitter) };
-      return { x: mapW - doorInset - 8*DPR, y: mapH/2 + rand(-jitter,jitter) };
+      if(pick===0) return { x: mapW/2 + rand(-jitter,jitter), y: doorInset + 8*PX };
+      if(pick===1) return { x: mapW/2 + rand(-jitter,jitter), y: mapH - doorInset - 8*PX };
+      if(pick===2) return { x: doorInset + 8*PX, y: mapH/2 + rand(-jitter,jitter) };
+      return { x: mapW - doorInset - 8*PX, y: mapH/2 + rand(-jitter,jitter) };
     }
     const m = manholes[pick - 4];
-    const j = 12 * DPR;
+    const j = 12 * PX;
     return { x: m.x + rand(-j, j), y: m.y + rand(-j, j) };
   }
 
@@ -1627,7 +1706,7 @@
     // 1-1: cap speed so fastest mice are just below player speed
     if(currentLevelConfig && currentLevelConfig.id === "1-1" && sp > 0) {
       const maxSp = (typeof player !== "undefined" && player.moveSpeed != null ? player.moveSpeed : BASE.speed) * 0.99;
-      if(sp * DPR > maxSp * DPR) sp = maxSp;
+      if(sp * PX > maxSp * PX) sp = maxSp;
     }
     sp *= DPR;
     if(currentLevelConfig && currentLevelConfig.id === "1-1") sp *= 0.8;  // 1-1: skittering mice 20% slower
@@ -1644,7 +1723,7 @@
 
     enemies.push({
       kind: "skitteringMouse",
-      x,y, r: baseR*DPR,
+      x,y, r: baseR*PX,
       hp: finalHp,
       maxHP: finalHp,
       sp: finalSp,
@@ -1673,13 +1752,13 @@
       const r = BASE_MOUSE_R * 3;
       const hp = smallestMobHP * 5 * lvl1_1HpScale;
       const contactDmg = Math.round(smallestMobDmg * 5);
-      let minibossSp = 92 * DPR * Math.min(1, scaleSpeed);
+      let minibossSp = 92 * PX * Math.min(1, scaleSpeed);
       if(currentLevelConfig && currentLevelConfig.id === "1-1") minibossSp *= 0.8;  // 1-1: skittering mice 20% slower
-      if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && minibossSp > player.moveSpeed * DPR) minibossSp = player.moveSpeed * DPR * 0.99;
+      if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && minibossSp > player.moveSpeed * PX) minibossSp = player.moveSpeed * PX * 0.99;
       enemies.push({
         kind: "skitteringMouse",
         x,y,
-        r: r*DPR,
+        r: r*PX,
         hp, maxHP: hp,
         sp: minibossSp,
         elite: true,
@@ -1696,13 +1775,13 @@
     const r = BASE_MOUSE_R * 6;
     const hp = smallestMobHP * 20 * lvl1_1HpScale;
     const contactDmg = Math.round(smallestMobDmg * 20);
-    let bossSp = 98 * DPR * Math.min(1, scaleSpeed);
+    let bossSp = 98 * PX * Math.min(1, scaleSpeed);
     if(currentLevelConfig && currentLevelConfig.id === "1-1") bossSp *= 0.8;  // 1-1: skittering mice 20% slower
-    if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && bossSp > player.moveSpeed * DPR) bossSp = player.moveSpeed * DPR * 0.99;
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && bossSp > player.moveSpeed * PX) bossSp = player.moveSpeed * PX * 0.99;
     enemies.push({
       kind: "skitteringMouse",
       x,y,
-      r: r*DPR,
+      r: r*PX,
       hp, maxHP: hp,
       sp: bossSp,
       elite: true,
@@ -1727,9 +1806,9 @@
     enemies.push({
       kind: "skitteringMouse",
       x,y,
-      r: r*DPR,
+      r: r*PX,
       hp, maxHP: hp,
-      sp: (currentLevelConfig && currentLevelConfig.id === "1-1" ? 0.8 : 1) * 88*DPR,  // 1-1: skittering mice 20% slower
+      sp: (currentLevelConfig && currentLevelConfig.id === "1-1" ? 0.8 : 1) * 88*PX,  // 1-1: skittering mice 20% slower
       elite: true,
       boss: true,
       miniboss: false,
@@ -1758,14 +1837,17 @@
   }
 
   function shootInDirection(ux, uy){
-    const sp=BASE.bulletSpeed*DPR;
+    const sp=BASE.bulletSpeed*PX;
+    const pierceVal = player.pierce || 0;
+    const pierceInt = Math.floor(pierceVal) + (Math.random() < (pierceVal % 1) ? 1 : 0);
     bullets.push({
-      x: player.x + ux*(player.r+6*DPR),
-      y: player.y + uy*(player.r+6*DPR),
+      x: player.x + ux*(player.r+6*PX),
+      y: player.y + uy*(player.r+6*PX),
       vx: ux*sp, vy: uy*sp,
-      r: 4.2*DPR,
+      r: 4.2*PX,
       life: BASE.bulletLife,
-      pierce: player.pierce,
+      pierce: pierceInt,
+      hits: 0,
       dmg: player.dmg,
       crit: Math.random() < player.crit
     });
@@ -1773,18 +1855,23 @@
   }
 
   function hitEnemy(e,dmg){
+    if(player.obliterateChance > 0 && !e.boss){
+      const obl = e.miniboss ? player.obliterateChance * 0.35 : player.obliterateChance;
+      if(Math.random() < obl){ killEnemy(e); return; }
+    }
     e.hp -= dmg;
     e.hitFlash = 0.12;
+    if(player.stunChance > 0 && Math.random() < player.stunChance) e.stunUntil = now() + (player.stunDuration || 0.6);
     beep({freq: 260 + rand(-35,35), dur:0.02, type:"sine", gain:0.028});
     if(e.hp<=0) killEnemy(e);
   }
 
   function spawnLevelUpRing(x,y){
-    levelUpRings.push({ x, y, r: 0, maxR: 600*DPR, life: 0.42, t: 0 });
+    levelUpRings.push({ x, y, r: 0, maxR: 600*PX, life: 0.42, t: 0 });
   }
   function splashDamage(x,y, amount, noSound=false, radiusOverride=null){
     if(amount<=0) return;
-    const rad = radiusOverride != null ? radiusOverride : (36+amount*0.55)*DPR;
+    const rad = radiusOverride != null ? radiusOverride : (36+amount*0.55)*PX;
     const r2=rad*rad;
     for(const e of enemies){
       const dd=dist2(x,y,e.x,e.y);
@@ -1824,11 +1911,11 @@
       if(runMusic){ runMusic.pause(); runMusic.currentTime=0; runMusic=null; }
       for(let n=0;n<24;n++){
         const a = Math.random()*Math.PI*2;
-        const sp = rand(80,220)*DPR;
+        const sp = rand(80,220)*PX;
         particles.push({
-          x: dx + rand(-16,16)*DPR, y: dy + rand(-16,16)*DPR,
-          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(20,80)*DPR,
-          r: rand(3,8)*DPR, life: rand(0.5,1.1), t: 0,
+          x: dx + rand(-16,16)*PX, y: dy + rand(-16,16)*PX,
+          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(20,80)*PX,
+          r: rand(3,8)*PX, life: rand(0.5,1.1), t: 0,
           col: pick(["#8b0000","#660000","#4a0000","#2d0000","#1a0000","#550000"])
         });
       }
@@ -1888,7 +1975,7 @@
         if (e.boss) ml = 50 + Math.floor(Math.random() * 50);
         const col = bloodType.color || "#c0392b";
         const scale = e.boss ? 1.8 : (e.elite ? 1.25 : 1);
-        const baseR = 14 * DPR;
+        const baseR = 14 * PX;
         const mainR = baseR * scale;
         const secondary = [];
         for (let i = 0; i < 2; i++) {
@@ -1921,13 +2008,13 @@
         // Small blood-splat burst when pool appears.
         for(let n=0;n<9;n++){
           const a = Math.random()*Math.PI*2;
-          const sp = rand(40,140)*DPR;
+          const sp = rand(40,140)*PX;
           particles.push({
             x: e.x,
             y: e.y,
             vx: Math.cos(a)*sp,
             vy: Math.sin(a)*sp*0.4,
-            r: rand(2.5,5)*DPR,
+            r: rand(2.5,5)*PX,
             life: rand(0.25,0.5),
             t: 0,
             col: col
@@ -2006,12 +2093,12 @@
     const n=big?42:28;
     for(let i=0;i<n;i++){
       const a=rand(0,Math.PI*2);
-      const sp=rand(big?220:160, big?680:520)*DPR;
+      const sp=rand(big?220:160, big?680:520)*PX;
       particles.push({
         x,y,
         vx: Math.cos(a)*sp,
-        vy: Math.sin(a)*sp - rand(0,big?220:160)*DPR,
-        r: rand(1.8, big?4.4:3.6)*DPR,
+        vy: Math.sin(a)*sp - rand(0,big?220:160)*PX,
+        r: rand(1.8, big?4.4:3.6)*PX,
         life: rand(big?0.55:0.45, big?1.05:0.85),
         t:0,
         col: gold,
@@ -2546,7 +2633,8 @@
     infoPanel.className = "coreTreeInfoPanel";
     infoPanel.style.cssText = "position:absolute; max-width:240px; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:8px 12px; font-size:11px; line-height:1.4; box-shadow:0 0 24px rgba(0,0,0,.7); overflow:auto; display:none; pointer-events:none; z-index:5;";
 
-    function buildNodeRow(node, level, maxLevel, unlocked){
+    /** @param {'right'|'left'|'top'|'bottom'} infoPlace - where to show info: 'right' = to right of balloon (left col), 'left' = to left (right col), 'top' = above (bottom row), 'bottom' = below (top row) */
+    function buildNodeRow(node, level, maxLevel, unlocked, infoPlace){
       const row = document.createElement("div");
       row.className = "coreTreeNodeRow";
       row.style.cssText = "display:flex; flex-direction:row; align-items:center; gap:10px; flex-shrink:0; transform:translateX(-60px);";
@@ -2585,29 +2673,15 @@
       balloon.addEventListener("click", (e) => {
         e.stopPropagation();
         if(level >= maxLevel) return;
+        if(!canUpgrade) return;
         panel.querySelectorAll(".coreTreeConfirmMenu").forEach(m => m.remove());
         const menu = document.createElement("div");
         menu.className = "coreTreeConfirmMenu";
-        menu.style.cssText = "position:absolute; background:#000; color:#fff; border:1px solid #fff; border-radius:8px; padding:10px 14px; font-size:11px; z-index:15; box-shadow:0 4px 20px rgba(0,0,0,.6); display:flex; flex-direction:column; gap:8px; min-width:140px;";
-        const rect = balloon.getBoundingClientRect();
-        const panelRect = panel.getBoundingClientRect();
-        const menuWidth = 200;
-        const menuHeight = 80;
-        const idealLeft = rect.right - panelRect.left + 10;
-        const maxLeft = panelRect.width - menuWidth - 8;
-        const left = Math.max(8, Math.min(maxLeft, idealLeft));
-        const idealTop = rect.top - panelRect.top + rect.height / 2 - menuHeight / 2;
-        const maxTop = panelRect.height - menuHeight - 8;
-        const top = Math.max(8, Math.min(maxTop, idealTop));
-        menu.style.left = left + "px";
-        menu.style.top = top + "px";
+        menu.style.cssText = "position:absolute; background:rgba(0,0,0,.95); border:1px solid rgba(255,255,255,.3); border-radius:8px; padding:8px 12px; font-size:11px; z-index:15; box-shadow:0 4px 20px rgba(0,0,0,.6); display:flex; flex-direction:row; gap:10px; align-items:center; justify-content:center; white-space:nowrap;";
         const confirmBtn = document.createElement("button");
-        confirmBtn.textContent = "CONFIRM UPGRADE";
-        confirmBtn.style.cssText = "padding:8px 12px; border:1px solid rgba(124,255,178,.6); background:rgba(124,255,178,.2); color:#b8ffe0; font-weight:800; cursor:pointer; border-radius:6px;";
-        confirmBtn.disabled = !canUpgrade;
-        if(!canUpgrade) confirmBtn.style.opacity = "0.6";
+        confirmBtn.textContent = "Confirm";
+        confirmBtn.style.cssText = "padding:6px 12px; border:1px solid rgba(124,255,178,.6); background:rgba(124,255,178,.15); color:#7CFFB2; font-weight:800; cursor:pointer; border-radius:6px; font-size:11px;";
         confirmBtn.onclick = () => {
-          if(!canUpgrade) return;
           const costNow = getCoreNodeCost(node, level, maxLevel);
           if(costNow <= 0 || tokens < costNow) return;
           tokens -= costNow;
@@ -2615,15 +2689,24 @@
           localStorage.setItem("affixloot_tokens", String(tokens));
           localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
           beep({freq:640,dur:0.06,type:"triangle",gain:0.05});
+          menu.remove();
           showCoreSystemsMenu();
         };
-        const backBtn = document.createElement("button");
-        backBtn.textContent = "BACK";
-        backBtn.style.cssText = "padding:8px 12px; border:1px solid rgba(255,255,255,.5); background:rgba(255,255,255,.1); color:#fff; font-weight:800; cursor:pointer; border-radius:6px;";
-        backBtn.onclick = () => { menu.remove(); };
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.style.cssText = "padding:6px 12px; border:1px solid rgba(255,77,109,.5); background:rgba(255,77,109,.15); color:#FF4D6D; font-weight:800; cursor:pointer; border-radius:6px; font-size:11px;";
+        cancelBtn.onclick = () => { menu.remove(); };
         menu.appendChild(confirmBtn);
-        menu.appendChild(backBtn);
+        menu.appendChild(cancelBtn);
         panel.appendChild(menu);
+        const s = appScale || 1;
+        const balloonRect = balloon.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const balloonCenterX = (balloonRect.left - panelRect.left + balloonRect.width / 2) / s;
+        const balloonCenterY = (balloonRect.top - panelRect.top + balloonRect.height / 2) / s;
+        menu.style.left = balloonCenterX + "px";
+        menu.style.top = balloonCenterY + "px";
+        menu.style.transform = "translate(-50%, -50%)";
       });
 
       row.addEventListener("mouseenter", () => {
@@ -2638,13 +2721,43 @@
             <div class="coreTreeStatRow"><span class="coreTreeStatLabel">Next stat</span><div class="coreTreeStatValue">${info.next}</div></div>
           </div>
         `;
+        infoPanel.style.display = "block";
         const panelRect = panel.getBoundingClientRect();
         const balloonRect = balloon.getBoundingClientRect();
-        const left = Math.min(panelRect.width - 260, Math.max(8, balloonRect.right - panelRect.left + 10));
-        const top = Math.max(8, balloonRect.top - panelRect.top - 4);
-        infoPanel.style.left = left + "px";
-        infoPanel.style.top = top + "px";
-        infoPanel.style.display = "block";
+        const infoRect = infoPanel.getBoundingClientRect();
+        const gap = 10;
+        const s = appScale || 1;
+        const px = (v) => (v - panelRect.left) / s;
+        const py = (v) => (v - panelRect.top) / s;
+        const pw = (w) => w / s;
+        const ph = (h) => h / s;
+        const panelW = pw(panelRect.width);
+        const panelH = ph(panelRect.height);
+        const bw = pw(balloonRect.width);
+        const bh = ph(balloonRect.height);
+        const iw = pw(infoRect.width);
+        const ih = ph(infoRect.height);
+        const bx0 = px(balloonRect.left);
+        const by0 = py(balloonRect.top);
+        const bx1 = bx0 + bw;
+        const by1 = by0 + bh;
+        const margin = 8;
+        let left, top;
+        if (infoPlace === "right") {
+          left = Math.min(panelW - iw - margin, bx1 + gap);
+          top = Math.max(margin, Math.min(panelH - ih - margin, by0 + bh / 2 - ih / 2));
+        } else if (infoPlace === "left") {
+          left = Math.max(margin, bx0 - iw - gap);
+          top = Math.max(margin, Math.min(panelH - ih - margin, by0 + bh / 2 - ih / 2));
+        } else if (infoPlace === "bottom") {
+          top = by1 + gap;
+          left = Math.max(margin, Math.min(panelW - iw - margin, bx0 + bw / 2 - iw / 2));
+        } else {
+          top = by0 - ih - gap;
+          left = Math.max(margin, Math.min(panelW - iw - margin, bx0 + bw / 2 - iw / 2));
+        }
+        infoPanel.style.left = Math.round(left) + "px";
+        infoPanel.style.top = Math.round(top) + "px";
       });
       row.addEventListener("mouseleave", () => {
         infoPanel.style.display = "none";
@@ -2781,7 +2894,7 @@
         const ml = topNode.maxLevel != null ? topNode.maxLevel : SKILL_TREE_MAX_LEVEL;
         const req = Array.isArray(topNode.requires)?topNode.requires:[];
         let un = true; for(const r of req) if((skillLevels[r]||0)<=0){ un=false; break; }
-        topRow.appendChild(buildNodeRow(topNode, l, ml, un));
+        topRow.appendChild(buildNodeRow(topNode, l, ml, un, "bottom"));
       }
       const midRow = document.createElement("div");
       midRow.style.cssText = "display:flex; justify-content:space-between; align-items:flex-start; flex:1; min-height:0; position:relative; z-index:1; padding:0; transform:translateX(19px);";
@@ -2796,14 +2909,14 @@
         const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
         const requires = Array.isArray(node.requires)?node.requires:[];
         let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
-        leftCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
+        leftCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, "right"));
       }
       for(const node of rightNodes){
         const level = Math.min(skillLevels[node.id]||0, node.maxLevel||SKILL_TREE_MAX_LEVEL);
         const maxLevel = node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
         const requires = Array.isArray(node.requires)?node.requires:[];
         let unlocked = true; for(const r of requires) if((skillLevels[r]||0)<=0){ unlocked=false; break; }
-        rightCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
+        rightCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, "left"));
       }
       midRow.appendChild(leftCol);
       midRow.appendChild(midSpacer);
@@ -2813,7 +2926,7 @@
       if(baseNode){
         const level = Math.min(skillLevels[baseNode.id]||0, baseNode.maxLevel||SKILL_TREE_MAX_LEVEL);
         const maxLevel = baseNode.maxLevel != null ? baseNode.maxLevel : SKILL_TREE_MAX_LEVEL;
-        bottomRow.appendChild(buildNodeRow(baseNode, level, maxLevel, true));
+        bottomRow.appendChild(buildNodeRow(baseNode, level, maxLevel, true, "top"));
       }
       branchWrap.appendChild(topRow);
       branchWrap.appendChild(midRow);
@@ -2854,7 +2967,7 @@
         const requires = Array.isArray(node.requires) ? node.requires : [];
         let unlocked = true;
         for(const reqId of requires){ if((skillLevels[reqId]||0) <= 0){ unlocked = false; break; } }
-        nodesCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked));
+        nodesCol.appendChild(buildNodeRow(node, level, maxLevel, unlocked, "right"));
       }
       nodesWrap.appendChild(nodesCol);
       col.appendChild(nodesWrap);
@@ -3111,11 +3224,11 @@
     mapW = 2 * W;
     mapH = 2 * H;
     const mapScale = 0.5;
-    const margin = 80 * DPR * mapScale;
-    const manholeR = 32 * DPR;
+    const margin = 80 * PX * mapScale;
+    const manholeR = 32 * PX;
     const fountainCx = mapW / 2, fountainCy = mapH / 2;
-    const avoidR = ((80 * 1.4 * DPR) + manholeR + 40 * DPR) * mapScale;
-    const MIN_MANHOLE_SEP = 70 * DPR;
+    const avoidR = ((80 * 1.4 * PX) + manholeR + 40 * PX) * mapScale;
+    const MIN_MANHOLE_SEP = 70 * PX;
     manholes = [];
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 2; col++) {
@@ -3155,9 +3268,9 @@
         }
       }
     }
-    const doorInset = 40 * DPR * mapScale;
+    const doorInset = 40 * PX * mapScale;
     // Mall buildings: size scaled with map (was 8×5 tiles on 4× viewport; now 6×4 on 2× viewport for same relative spread).
-    const TILE = 48 * DPR;
+    const TILE = 48 * PX;
     const SHOP_W = 6 * TILE;
     const SHOP_H = 4 * TILE;
     const shopTypes = [
@@ -3172,7 +3285,7 @@
       return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
     }
     function rectOverlapsManhole(rx, ry, rw, rh, clearance) {
-      const c = clearance != null ? clearance : 24 * DPR;
+      const c = clearance != null ? clearance : 24 * PX;
       for (const m of manholes) {
         const closestX = Math.max(rx, Math.min(m.x, rx + rw));
         const closestY = Math.max(ry, Math.min(m.y, ry + rh));
@@ -3190,8 +3303,8 @@
 
     mallProps = [];
     const zoneW = mapW / 2, zoneH = mapH / 3;
-    const pad = 55 * DPR * mapScale;
-    const SHOP_MANHOLE_CLEAR = 28 * DPR;
+    const pad = 55 * PX * mapScale;
+    const SHOP_MANHOLE_CLEAR = 28 * PX;
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 2; col++) {
         const T = shopTypes[ mallProps.length % shopTypes.length ];
@@ -3202,10 +3315,10 @@
           let x = pad + rand(0, maxXSpan) + col * zoneW;
           let y = pad + rand(0, maxYSpan) + row * zoneH;
           const cx = x + T.w/2, cy = y + T.h/2;
-          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR*mapScale) {
+          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*PX*mapScale) {
             const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
-            x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR*mapScale) - T.w/2;
-            y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR*mapScale) - T.h/2;
+            x = fountainCx + Math.cos(angle) * (avoidR + 90*PX*mapScale) - T.w/2;
+            y = fountainCy + Math.sin(angle) * (avoidR + 90*PX*mapScale) - T.h/2;
           }
           if (x < pad || y < pad || x + T.w > mapW - pad || y + T.h > mapH - pad) continue;
           if (rectOverlapsManhole(x, y, T.w, T.h, SHOP_MANHOLE_CLEAR)) continue;
@@ -3217,10 +3330,10 @@
           let x = pad + rand(0, maxXSpan) + col * zoneW;
           let y = pad + rand(0, maxYSpan) + row * zoneH;
           const cx = x + T.w/2, cy = y + T.h/2;
-          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*DPR*mapScale) {
+          if (Math.hypot(cx - fountainCx, cy - fountainCy) < avoidR + 90*PX*mapScale) {
             const angle = Math.atan2(cy - fountainCy, cx - fountainCx);
-            x = fountainCx + Math.cos(angle) * (avoidR + 90*DPR*mapScale) - T.w/2;
-            y = fountainCy + Math.sin(angle) * (avoidR + 90*DPR*mapScale) - T.h/2;
+            x = fountainCx + Math.cos(angle) * (avoidR + 90*PX*mapScale) - T.w/2;
+            y = fountainCy + Math.sin(angle) * (avoidR + 90*PX*mapScale) - T.h/2;
           }
           mallProps.push({ kind: "shop", type: T.id, x, y, w: T.w, h: T.h, fill: T.fill, stroke: T.stroke, sign: T.sign });
         }
@@ -3232,13 +3345,13 @@
       const cx = x + w/2;
       const cy = y + h/2;
       // Keep inside map
-      const marginInner = 40 * DPR * mapScale;
+      const marginInner = 40 * PX * mapScale;
       if(x < marginInner || y < marginInner || x + w > mapW - marginInner || y + h > mapH - marginInner) return false;
       // Avoid fountain
       const dF = Math.hypot(cx - fountainCx, cy - fountainCy);
       if(dF < avoidR + Math.max(w,h)*0.6) return false;
       // Avoid manholes (with clear gap so nothing overlaps)
-      const manholeClear = Math.max(w,h)*0.6 + 25*DPR;
+      const manholeClear = Math.max(w,h)*0.6 + 25*PX;
       for(const m of manholes){
         const d = Math.hypot(cx - m.x, cy - m.y);
         if(d < m.r + manholeClear) return false;
@@ -3259,7 +3372,7 @@
     const zoneWSc = mapW / SCENERY_GRID_COLS, zoneHSc = mapH / SCENERY_GRID_ROWS;
     function placeScenery(kind, count){
       const maxAttempts = 40;
-      const edge = 60 * DPR * mapScale;
+      const edge = 60 * PX * mapScale;
       for(let i=0;i<count;i++){
         let placed = false;
         const cell = i % (SCENERY_GRID_COLS * SCENERY_GRID_ROWS);
@@ -3306,8 +3419,8 @@
     if(level11Active){
       setupLevel11Zones();
     }
-    const poolR = 80 * 1.4 * DPR * mapScale;
-    const spawnDist = poolR + player.r + 28 * DPR * mapScale;
+    const poolR = 80 * 1.4 * PX * mapScale;
+    const spawnDist = poolR + player.r + 28 * PX * mapScale;
     const spawnAngle = Math.random() * Math.PI * 2;
     player.x = fountainCx + Math.cos(spawnAngle) * spawnDist;
     player.y = fountainCy + Math.sin(spawnAngle) * spawnDist;
@@ -3359,11 +3472,11 @@
       devGiftItem.name = "Gift from dev❤️";
       const fountainCx = mapW / 2, fountainCy = mapH / 2;
       const distPlayerToFountain = Math.hypot(player.x - fountainCx, player.y - fountainCy);
-      const giftDist = Math.max(distPlayerToFountain, 1) + 48 * DPR;
+      const giftDist = Math.max(distPlayerToFountain, 1) + 48 * PX;
       const giftAngle = Math.atan2(player.y - fountainCy, player.x - fountainCx);
       const giftX = fountainCx + Math.cos(giftAngle) * giftDist;
       const giftY = fountainCy + Math.sin(giftAngle) * giftDist;
-      lootDrops.push({ x: giftX, y: giftY, r: 12*DPR, item: devGiftItem, t: 0, bob: rand(0, Math.PI*2), devGift: true });
+      lootDrops.push({ x: giftX, y: giftY, r: 12*PX, item: devGiftItem, t: 0, bob: rand(0, Math.PI*2), devGift: true });
       level11Arrow = { targetX: giftX, targetY: giftY, t: 0, life: 10, delay: 0.5 };
     }
     tokensAtRunStart = tokens;
@@ -3419,16 +3532,16 @@
     level11WeldingZoneId = null;
     level11WeldMs = 0;
 
-    const corpseR = player ? player.r : 10 * DPR;
+    const corpseR = player ? player.r : 10 * PX;
     // Aggro zone slightly larger than bullet range so mice aggro before player can shoot them from outside
-    const bulletRange = (BASE.bulletSpeed * BASE.bulletLife) * DPR;
-    const aggroR = Math.max(260 * DPR, bulletRange * 1.12);
+    const bulletRange = (BASE.bulletSpeed * BASE.bulletLife) * PX;
+    const aggroR = Math.max(260 * PX, bulletRange * 1.12);
     const totalZones = Math.min(6, manholes.length);
     for(let i=0;i<totalZones;i++){
       const m = manholes[i];
       if(!m) continue;
       const ang = Math.random() * Math.PI * 2;
-      const dist = m.r + 70 * DPR;
+      const dist = m.r + 70 * PX;
       const cx = m.x + Math.cos(ang) * dist;
       const cy = m.y + Math.sin(ang) * dist;
       const zone = {
@@ -3522,7 +3635,7 @@
             const e = enemies[enemies.length - 1];
             if(e){
               const angle = Math.random() * Math.PI * 2;
-              const dist = m.r + 22 * DPR;
+              const dist = m.r + 22 * PX;
               e.x = m.x + Math.cos(angle) * dist;
               e.y = m.y + Math.sin(angle) * dist;
               e.clusterZone = zone.id;
@@ -3568,7 +3681,7 @@
   function updateLevel11Weld(dt, elapsed){
     if(!level11Active || !level11Zones.length) return;
 
-    const weldR = LEVEL11_WELD_RADIUS * DPR;
+    const weldR = LEVEL11_WELD_RADIUS * PX;
     let candidate = null;
 
     for(const zone of level11Zones){
@@ -3819,13 +3932,13 @@
         extractionCountdown=null;
         if(player.hp>0){
           extractionLiftoff = { t: 0, duration: EXTRACTION_LIFTOFF_DURATION, ignitionDuration: EXTRACTION_IGNITION_DURATION, rocketSounded: false };
-          extractionFlameRing = { t: 0, duration: 0.7, maxR: 550*DPR };
+          extractionFlameRing = { t: 0, duration: 0.7, maxR: 550*PX };
           spawnLevelUpRing(player.x, player.y);
           for(let n=0;n<28;n++){
             extractionRocketParticles.push({
-              x: player.x + rand(-20,20)*DPR, y: player.y,
-              vx: rand(-40,40)*DPR, vy: rand(80,220)*DPR,
-              r: rand(8,22)*DPR, life: rand(0.3,0.7), t: 0,
+              x: player.x + rand(-20,20)*PX, y: player.y,
+              vx: rand(-40,40)*PX, vy: rand(80,220)*PX,
+              r: rand(8,22)*PX, life: rand(0.3,0.7), t: 0,
               col: pick(["#ff6600","#ff8800","#ffaa00","#ff2200"])
             });
           }
@@ -3905,7 +4018,7 @@
     if(deathSequence){
       deathSequence.t += dt;
       const dx = deathSequence.px, dy = deathSequence.py;
-      const feedSpeed = 45*DPR;
+      const feedSpeed = 45*PX;
       for(const e of enemies){
         const ex= e.x, ey= e.y;
         const d = Math.hypot(dx-ex, dy-ey)||1;
@@ -3917,18 +4030,18 @@
       }
       if(Math.random() < 0.42){
         const a = Math.random()*Math.PI*2;
-        const sp = rand(40,140)*DPR;
+        const sp = rand(40,140)*PX;
         particles.push({
-          x: dx + rand(-12,12)*DPR, y: dy + rand(-12,12)*DPR,
-          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(0,30)*DPR,
-          r: rand(2,6)*DPR, life: rand(0.4,0.9), t: 0,
+          x: dx + rand(-12,12)*PX, y: dy + rand(-12,12)*PX,
+          vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - rand(0,30)*PX,
+          r: rand(2,6)*PX, life: rand(0.4,0.9), t: 0,
           col: pick(["#8b0000","#660000","#4a0000","#2d0000","#1a0000"])
         });
       }
       for(let i=particles.length-1;i>=0;i--){
         const p=particles[i];
         p.t+=dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
-        p.vx*=(1-2.8*dt); p.vy*=(1-2.8*dt); p.vy+=20*DPR*dt;
+        p.vx*=(1-2.8*dt); p.vy*=(1-2.8*dt); p.vy+=20*PX*dt;
         if(p.t>p.life) particles.splice(i,1);
       }
       if(deathSequence.t >= deathSequence.duration){
@@ -4089,7 +4202,7 @@
     if(ix||iy){ ix/=il; iy/=il; }
 
     player.dashCD=Math.max(0, player.dashCD-dt);
-    let speed=player.moveSpeed*DPR;
+    let speed=player.moveSpeed*PX;
 
     // Defer dash direction by one frame so all keydowns (e.g. W+A+Space) are in keys set.
     // Fixes diagonal dash (e.g. up-left) when Space is delivered before arrow keys locally/debug.
@@ -4110,14 +4223,14 @@
     }
     if(player.dashT>0){
       player.dashT-=dt;
-      speed=BASE.dashSpeed*DPR;
+      speed=BASE.dashSpeed*PX;
       player.vx=player.dashIx*speed;
       player.vy=player.dashIy*speed;
     } else {
       player.vx=ix*speed;
       player.vy=iy*speed;
     }
-    const margin = 24 * DPR;
+    const margin = 24 * PX;
     player.x=clamp(player.x+player.vx*dt, margin, mapW-margin);
     player.y=clamp(player.y+player.vy*dt, margin, mapH-margin);
     let out = pushOutOfFountain(player.x, player.y, player.r);
@@ -4127,7 +4240,7 @@
     out = pushOutOfMallProps(player.x, player.y, player.r);
     player.x = out.x; player.y = out.y;
     const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
-    if (plSpeed > 0.5*DPR) {
+    if (plSpeed > 0.5*PX) {
       const vy = player.vy || 0;
       let dir = vy < 0 ? "back" : "front";
       const aimUp = keys.has("arrowup"), aimDown = keys.has("arrowdown");
@@ -4138,7 +4251,7 @@
 
     // slow aura
     const aura=player.slowAura;
-    const auraR=(90+aura*120)*DPR;
+    const auraR=(90+aura*120)*PX;
     const auraR2=auraR*auraR;
 
     // enemies move + collision
@@ -4151,13 +4264,14 @@
         if(e.hitFlash>0) e.hitFlash-=dt;
         continue;
       }
+      if(e.stunUntil != null && now() < e.stunUntil){ if(e.hitFlash>0) e.hitFlash-=dt; continue; }
 
       // Move enemy toward player (with slow aura)
       const dx0 = player.x - e.x, dy0 = player.y - e.y;
       const d0 = Math.hypot(dx0,dy0) || 1;
       let sp = e.sp;
       // 1-1: fastest mice never faster than character — cap just below player speed
-      if(lvl.id === "1-1" && sp > player.moveSpeed * DPR) sp = player.moveSpeed * DPR * 0.99;
+      if(lvl.id === "1-1" && sp > player.moveSpeed * PX) sp = player.moveSpeed * PX * 0.99;
       if(aura>0 && (dx0*dx0+dy0*dy0)<auraR2) sp *= (1-aura);
       e.x += (dx0/d0)*sp*dt;
       e.y += (dy0/d0)*sp*dt;
@@ -4172,7 +4286,7 @@
       if(e.hitFlash>0) e.hitFlash-=dt;
 
       // Player contact damage + separation: enemies stay at least MIN_GAP from player center (can touch and deal damage, but not overlap sprite)
-      const minGap = 22 * DPR;
+      const minGap = 22 * PX;
       const rr = (player.r + e.r + minGap);
       const dx = player.x - e.x, dy = player.y - e.y;
       const dist2 = dx*dx + dy*dy;
@@ -4221,6 +4335,8 @@
         if(dist2(b.x,b.y,e.x,e.y) < rr*rr){
           let dealt=b.dmg;
           if(b.crit) dealt=Math.round(dealt*player.critDmg);
+          if(b.hits>=1 && (player.pierceDmgMult||1)>1) dealt=Math.round(dealt*(player.pierceDmgMult||1));
+          b.hits++;
           hitEnemy(e,dealt);
           healFromLifesteal(dealt);
           if(player.splash>0) splashDamage(e.x,e.y, Math.round(dealt*player.splash));
@@ -4240,18 +4356,18 @@
       const rr=player.r+o.r;
       if(suckActive){
         const d=Math.sqrt(d2p)||1;
-        const sp=1200*DPR;
+        const sp=1200*PX;
         o.vx = ((player.x-o.x)/d)*sp;
         o.vy = ((player.y-o.y)/d)*sp;
         o.x += o.vx*dt; o.y += o.vy*dt;
       } else {
         o.x += o.vx*dt; o.y += o.vy*dt;
         o.vx *= (1-4*dt); o.vy *= (1-4*dt);
-        const pr=player.pickup*DPR;
+        const pr=player.pickup*PX;
         if(d2p < pr*pr){
           const d=Math.sqrt(d2p)||1;
           const pull=clamp(1-d/pr,0,1);
-          const sp=(240+pull*520)*DPR;
+          const sp=(240+pull*520)*PX;
           o.vx += ((player.x-o.x)/d)*sp*dt;
           o.vy += ((player.y-o.y)/d)*sp*dt;
         }
@@ -4259,15 +4375,15 @@
       const d2pCheck=dist2(o.x,o.y,player.x,player.y);
       if(d2pCheck < rr*rr){
         orbs.splice(i,1);
-        const xpAmt = o.r>5*DPR?6:3;
+        const xpAmt = o.r>5*PX?6:3;
         gainXP(xpAmt);
-        runBloodMlByType.common = (runBloodMlByType.common||0) + (o.r>5*DPR?3:1);
+        runBloodMlByType.common = (runBloodMlByType.common||0) + (o.r>5*PX?3:1);
         beep({freq:880,dur:0.02,type:"sine",gain:0.02,slide:0.92});
       }
     }
 
     // Blood pools: age in seconds; 0–10s = sampleable (red → dark); 10s = coagulated; remove after 20s
-    const R = BLOOD_GATHER_RADIUS * DPR;
+    const R = BLOOD_GATHER_RADIUS * PX;
     for (let i = bloodPools.length - 1; i >= 0; i--) {
       const pool = bloodPools[i];
       if (pool.gathered) {
@@ -4329,7 +4445,7 @@
       p.y += p.vy*dt;
       p.vx *= (1-2.8*dt);
       p.vy *= (1-2.8*dt);
-      p.vy += 20*DPR*dt;
+      p.vy += 20*PX*dt;
       if(p.t > p.life) particles.splice(i,1);
     }
     // level-up rings
@@ -4351,11 +4467,11 @@
 
   // ========= Rendering =========
   function drawGrid(){
-    const step = 46*DPR;
+    const step = 46*PX;
     ctx.save();
     ctx.globalAlpha = 0.095;
     ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.lineWidth = 1*DPR;
+    ctx.lineWidth = 1*PX;
 
     const ox = (player.x*0.08) % step;
     const oy = (player.y*0.08) % step;
@@ -4379,7 +4495,7 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.shadowColor = color;
-    ctx.shadowBlur = blur*DPR;
+    ctx.shadowBlur = blur*PX;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x,y,r,0,Math.PI*2);
@@ -4400,8 +4516,8 @@
 
   // Mall 1st floor: tiled floor with variation, grout, subtle gradients, rare cracks
   function drawMallFloorPlaceholder(){
-    const tile = 48 * DPR;
-    const gap = Math.max(1, 1 * DPR);
+    const tile = 48 * PX;
+    const gap = Math.max(1, 1 * PX);
     const w = Math.ceil(mapW / tile) + 1;
     const h = Math.ceil(mapH / tile) + 1;
     ctx.save();
@@ -4427,7 +4543,7 @@
         // Rare cracks (~8% of tiles), spread so similar ones are far apart
         if ((i * 7 + j * 11) % 13 === 2) {
           ctx.strokeStyle = "rgba(22,20,16,0.75)";
-          ctx.lineWidth = 1.2 * DPR;
+          ctx.lineWidth = 1.2 * PX;
           const cx = x + size/2, cy = y + size/2;
           const angle = (h % 360) * Math.PI / 180;
           const len = size * (0.12 + (h % 25) / 150);
@@ -4450,14 +4566,14 @@
   }
 
   // Fountain collision: same radius as drawn pool (solid obstacle)
-  const FOUNTAIN_R = 80 * 1.4 * 1;  // *DPR applied when used
+  const FOUNTAIN_R = 80 * 1.4 * 1;  // *PX applied when used
   let fountainDecorKind = "duck";   // "duck" for easy; "skull" reserved for hard mode later
   let fountainDecorAngle = 0;
   let fountainDecorRadiusFrac = 0.4;
   function getFountainCenter(){ return { cx: mapW / 2, cy: mapH / 2 }; }
   function pushOutOfFountain(x, y, entityR){
     const { cx, cy } = getFountainCenter();
-    const fr = FOUNTAIN_R * DPR;
+    const fr = FOUNTAIN_R * PX;
     const d = Math.hypot(x - cx, y - cy) || 1;
     const minDist = fr + entityR;
     if (d < minDist) {
@@ -4489,7 +4605,7 @@
     const cx = clamp(px, rx, rx + rw);
     const cy = clamp(py, ry, ry + rh);
     const d = Math.hypot(px - cx, py - cy) || 1;
-    const minDist = entityR + 2*DPR;
+    const minDist = entityR + 2*PX;
     if (d < minDist) {
       const scale = minDist / d;
       return { x: cx + (px - cx) * scale, y: cy + (py - cy) * scale };
@@ -4508,9 +4624,9 @@
   function drawFountain(){
     const cx = mapW / 2, cy = mapH / 2;
     const t = now() * 0.001;
-    const baseR = 80 * DPR;
+    const baseR = 80 * PX;
     const poolR = baseR * 1.4;
-    const ringW = 14 * DPR;
+    const ringW = 14 * PX;
     const waterR = poolR - ringW;
     const coreR = waterR * 0.22;
     ctx.save();
@@ -4521,7 +4637,7 @@
     ctx.arc(cx, cy, waterR, 0, Math.PI * 2, true);
     ctx.fill();
     ctx.strokeStyle = "#7a7266";
-    ctx.lineWidth = 2 * DPR;
+    ctx.lineWidth = 2 * PX;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(cx, cy, poolR, 0, Math.PI * 2);
@@ -4547,7 +4663,7 @@
     ctx.fill();
     ctx.restore();
     ctx.strokeStyle = "rgba(90,160,200,0.35)";
-    ctx.lineWidth = 1.5 * DPR;
+    ctx.lineWidth = 1.5 * PX;
     ctx.beginPath();
     ctx.arc(cx, cy, waterR, 0, Math.PI * 2);
     ctx.stroke();
@@ -4557,16 +4673,16 @@
     const decorX = cx + Math.cos(decorAngle) * decorR;
     const baseDecorY = cy + Math.sin(decorAngle) * (waterR * 0.25);
     const isDuck = fountainDecorKind === "duck";
-    const bobAmp = (isDuck ? 1.2 : 2.5) * DPR;
+    const bobAmp = (isDuck ? 1.2 : 2.5) * PX;
     const decorBob = bobAmp * Math.sin(t * (isDuck ? 1.2 : 1.6));
     const decorY = baseDecorY + decorBob;
-    const lineHalfW = (isDuck ? 22 : 18) * DPR;
-    const waveAmp = 2.2 * DPR;
+    const lineHalfW = (isDuck ? 22 : 18) * PX;
+    const waveAmp = 2.2 * PX;
     const waveFreq = 0.12;
     const waveY = (x) => baseDecorY + waveAmp * Math.sin((x - decorX) * waveFreq);
     ctx.save();
     ctx.strokeStyle = "rgba(25,45,65,0.85)";
-    ctx.lineWidth = 2.2 * DPR;
+    ctx.lineWidth = 2.2 * PX;
     ctx.beginPath();
     for (let i = 0; i <= 24; i++) {
       const x = decorX - lineHalfW + (i / 24) * (2 * lineHalfW);
@@ -4576,7 +4692,7 @@
     ctx.stroke();
     ctx.save();
     ctx.beginPath();
-    const topY = baseDecorY - 20 * DPR;
+    const topY = baseDecorY - 20 * PX;
     ctx.moveTo(decorX - lineHalfW, topY);
     ctx.lineTo(decorX + lineHalfW, topY);
     ctx.lineTo(decorX + lineHalfW, waveY(decorX + lineHalfW));
@@ -4589,7 +4705,7 @@
     ctx.save();
     ctx.translate(decorX, decorY);
     if(!isDuck) ctx.rotate(-Math.PI * 0.25);
-    ctx.font = `${22 * DPR}px serif`;
+    ctx.font = `${22 * PX}px serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(255,255,255,0.92)";
@@ -4608,41 +4724,41 @@
         if(p.kind === "bench"){
           const seatH = h * 0.25;
           const backH = h * 0.25;
-          const seatY = y + h - seatH - 4*DPR;
+          const seatY = y + h - seatH - 4*PX;
           const backY = seatY - backH;
           // Bench back
           ctx.fillStyle = "rgba(90,70,50,0.96)";
           ctx.strokeStyle = "rgba(30,22,15,0.9)";
-          ctx.lineWidth = 2 * DPR;
-          roundRect(x + 4*DPR, backY, w - 30*DPR, backH, 4*DPR);
+          ctx.lineWidth = 2 * PX;
+          roundRect(x + 4*PX, backY, w - 30*PX, backH, 4*PX);
           ctx.fill();
           ctx.stroke();
           // Bench seat
           ctx.fillStyle = "rgba(130,95,60,0.98)";
-          roundRect(x + 4*DPR, seatY, w - 30*DPR, seatH, 4*DPR);
+          roundRect(x + 4*PX, seatY, w - 30*PX, seatH, 4*PX);
           ctx.fill();
           // Legs
           ctx.fillStyle = "rgba(20,16,12,0.9)";
-          const legW = 6*DPR, legH = seatH*0.7;
-          ctx.fillRect(x + 10*DPR, seatY + seatH - 2*DPR, legW, legH);
-          ctx.fillRect(x + w - 10*DPR - legW, seatY + seatH - 2*DPR, legW, legH);
+          const legW = 6*PX, legH = seatH*0.7;
+          ctx.fillRect(x + 10*PX, seatY + seatH - 2*PX, legW, legH);
+          ctx.fillRect(x + w - 10*PX - legW, seatY + seatH - 2*PX, legW, legH);
           // Trash can at one end
-          const binW = 20*DPR, binH = h * 0.7;
-          const binX = x + w - binW - 4*DPR;
-          const binY = y + h - binH - 2*DPR;
+          const binW = 20*PX, binH = h * 0.7;
+          const binX = x + w - binW - 4*PX;
+          const binY = y + h - binH - 2*PX;
           const binGrad = ctx.createLinearGradient(binX, binY, binX, binY + binH);
           binGrad.addColorStop(0, "rgba(60,70,80,0.98)");
           binGrad.addColorStop(1, "rgba(30,34,40,0.98)");
           ctx.fillStyle = binGrad;
-          roundRect(binX, binY, binW, binH, 5*DPR);
+          roundRect(binX, binY, binW, binH, 5*PX);
           ctx.fill();
           ctx.strokeStyle = "rgba(200,220,255,0.5)";
-          ctx.lineWidth = 1 * DPR;
+          ctx.lineWidth = 1 * PX;
           ctx.beginPath();
-          ctx.moveTo(binX + 4*DPR, binY + 8*DPR);
-          ctx.lineTo(binX + binW - 4*DPR, binY + 8*DPR);
+          ctx.moveTo(binX + 4*PX, binY + 8*PX);
+          ctx.lineTo(binX + binW - 4*PX, binY + 8*PX);
           ctx.stroke();
-          ctx.font = `${10*DPR}px ui-sans-serif`;
+          ctx.font = `${10*PX}px ui-sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillStyle = "rgba(220,230,240,0.95)";
@@ -4655,15 +4771,15 @@
           potGrad.addColorStop(0, "rgba(140,90,55,0.98)");
           potGrad.addColorStop(1, "rgba(90,60,35,0.98)");
           ctx.fillStyle = potGrad;
-          roundRect(x + 4*DPR, potY, w - 8*DPR, potH, 5*DPR);
+          roundRect(x + 4*PX, potY, w - 8*PX, potH, 5*PX);
           ctx.fill();
           // Soil
           ctx.fillStyle = "rgba(40,26,18,0.95)";
-          roundRect(x + 5*DPR, potY - 4*DPR, w - 10*DPR, 6*DPR, 4*DPR);
+          roundRect(x + 5*PX, potY - 4*PX, w - 10*PX, 6*PX, 4*PX);
           ctx.fill();
           // Flowers/leaves
           const cx = x + w/2;
-          const cy = potY - 6*DPR;
+          const cy = potY - 6*PX;
           ctx.fillStyle = "rgba(70,150,85,0.96)";
           ctx.beginPath();
           ctx.arc(cx, cy, w*0.3, 0, Math.PI*2);
@@ -4677,17 +4793,17 @@
           const potH = h * 0.35;
           const potY = y + h - potH;
           ctx.fillStyle = "rgba(60,60,65,0.98)";
-          roundRect(x + 6*DPR, potY, w - 12*DPR, potH, 8*DPR);
+          roundRect(x + 6*PX, potY, w - 12*PX, potH, 8*PX);
           ctx.fill();
           ctx.strokeStyle = "rgba(210,220,230,0.28)";
-          ctx.lineWidth = 1.5*DPR;
+          ctx.lineWidth = 1.5*PX;
           ctx.beginPath();
-          ctx.moveTo(x + 10*DPR, potY + 8*DPR);
-          ctx.lineTo(x + w - 10*DPR, potY + 8*DPR);
+          ctx.moveTo(x + 10*PX, potY + 8*PX);
+          ctx.lineTo(x + w - 10*PX, potY + 8*PX);
           ctx.stroke();
           // Dense leaves above
         const cx = x + w/2;
-        const baseY = potY - 6*DPR;
+        const baseY = potY - 6*PX;
         const leafR = Math.min(w, h) * 0.35;
         const leafColors = ["rgba(50,135,80,0.98)","rgba(40,115,70,0.96)","rgba(30,95,60,0.96)"];
         const leaves = Array.isArray(p.leaves) && p.leaves.length ? p.leaves : [
@@ -4721,74 +4837,74 @@
       // Building base (walls)
       ctx.fillStyle = p.fill;
       ctx.strokeStyle = p.stroke;
-      ctx.lineWidth = 3 * DPR;
-      roundRect(x, y, w, h, 10 * DPR);
+      ctx.lineWidth = 3 * PX;
+      roundRect(x, y, w, h, 10 * PX);
       ctx.fill();
       ctx.stroke();
 
       // Roof
       ctx.save();
       ctx.fillStyle = "rgba(12,10,8,0.95)";
-      roundRect(x, y, w, roofH, 10 * DPR);
+      roundRect(x, y, w, roofH, 10 * PX);
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.06)";
-      ctx.lineWidth = 1.5 * DPR;
+      ctx.lineWidth = 1.5 * PX;
       ctx.beginPath();
-      ctx.moveTo(x + 6*DPR, y + roofH - 3*DPR);
-      ctx.lineTo(x + w - 6*DPR, y + roofH - 3*DPR);
+      ctx.moveTo(x + 6*PX, y + roofH - 3*PX);
+      ctx.lineTo(x + w - 6*PX, y + roofH - 3*PX);
       ctx.stroke();
       ctx.restore();
 
       // Glass facade
-      const glassTop = facadeY + 6*DPR;
-      const glassH = facadeH - 18*DPR;
-      const glassW = w - 16*DPR;
-      const gx = x + 8*DPR;
+      const glassTop = facadeY + 6*PX;
+      const glassH = facadeH - 18*PX;
+      const glassW = w - 16*PX;
+      const gx = x + 8*PX;
       const gy = glassTop;
       const glassGrad = ctx.createLinearGradient(gx, gy, gx, gy + glassH);
       glassGrad.addColorStop(0, "rgba(190,230,255,0.85)");
       glassGrad.addColorStop(0.4, "rgba(130,190,230,0.75)");
       glassGrad.addColorStop(1, "rgba(60,100,140,0.85)");
       ctx.fillStyle = glassGrad;
-      roundRect(gx, gy, glassW, glassH, 8 * DPR);
+      roundRect(gx, gy, glassW, glassH, 8 * PX);
       ctx.fill();
       // Vertical mullions
       ctx.strokeStyle = "rgba(255,255,255,0.28)";
-      ctx.lineWidth = 1.2 * DPR;
+      ctx.lineWidth = 1.2 * PX;
       const cols = 4;
       for(let i=1;i<cols;i++){
         const cx = gx + (glassW * i/cols);
         ctx.beginPath();
-        ctx.moveTo(cx, gy + 4*DPR);
-        ctx.lineTo(cx, gy + glassH - 4*DPR);
+        ctx.moveTo(cx, gy + 4*PX);
+        ctx.lineTo(cx, gy + glassH - 4*PX);
         ctx.stroke();
       }
       // Horizontal mullion
       ctx.beginPath();
-      ctx.moveTo(gx + 4*DPR, gy + glassH*0.55);
-      ctx.lineTo(gx + glassW - 4*DPR, gy + glassH*0.55);
+      ctx.moveTo(gx + 4*PX, gy + glassH*0.55);
+      ctx.lineTo(gx + glassW - 4*PX, gy + glassH*0.55);
       ctx.stroke();
 
       // Door (simple darker glass panel in midten)
-      const doorW = Math.min(46*DPR, glassW * 0.22);
+      const doorW = Math.min(46*PX, glassW * 0.22);
       const doorH = glassH * 0.65;
       const doorX = x + w*0.5 - doorW/2;
-      const doorY = gy + glassH - doorH - 4*DPR;
+      const doorY = gy + glassH - doorH - 4*PX;
       const doorGrad = ctx.createLinearGradient(doorX, doorY, doorX, doorY + doorH);
       doorGrad.addColorStop(0, "rgba(170,220,255,0.95)");
       doorGrad.addColorStop(1, "rgba(80,130,180,0.95)");
       ctx.fillStyle = doorGrad;
-      roundRect(doorX, doorY, doorW, doorH, 6 * DPR);
+      roundRect(doorX, doorY, doorW, doorH, 6 * PX);
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.4)";
-      ctx.lineWidth = 1 * DPR;
+      ctx.lineWidth = 1 * PX;
       ctx.beginPath();
-      ctx.moveTo(doorX + doorW*0.5, doorY + 6*DPR);
-      ctx.lineTo(doorX + doorW*0.5, doorY + doorH - 6*DPR);
+      ctx.moveTo(doorX + doorW*0.5, doorY + 6*PX);
+      ctx.lineTo(doorX + doorW*0.5, doorY + doorH - 6*PX);
       ctx.stroke();
 
       // Sign with icon + name
-      const signW = Math.min(w * 0.65, 220 * DPR);
+      const signW = Math.min(w * 0.65, 220 * PX);
       const signH = roofH * 0.55;
       const signX = x + w*0.5 - signW/2;
       const signY = y + roofH*0.15;
@@ -4797,13 +4913,13 @@
       signGrad.addColorStop(1, "rgba(55,65,80,0.96)");
       ctx.fillStyle = signGrad;
       ctx.strokeStyle = "rgba(255,255,255,0.28)";
-      ctx.lineWidth = 1.6 * DPR;
+      ctx.lineWidth = 1.6 * PX;
       roundRect(signX, signY, signW, signH, 999);
       ctx.fill();
       ctx.stroke();
 
       const name = String(p.type || "").toUpperCase();
-      ctx.font = `${11*DPR}px ui-sans-serif`;
+      ctx.font = `${11*PX}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(240,245,255,0.96)";
@@ -4823,7 +4939,7 @@
       // Outer ring
       ctx.fillStyle = isClosed ? "#254026" : "#3a3632";
       ctx.strokeStyle = isClosed ? "#5e9b60" : "#5c5750";
-      ctx.lineWidth = 3 * DPR;
+      ctx.lineWidth = 3 * PX;
       ctx.beginPath();
       ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
       ctx.fill();
@@ -4834,7 +4950,7 @@
       ctx.arc(m.x, m.y, r * 0.88, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = isClosed ? "#6ecf73" : "#4a4540";
-      ctx.lineWidth = 1.5 * DPR;
+      ctx.lineWidth = 1.5 * PX;
       ctx.stroke();
       // Center plug
       ctx.fillStyle = isClosed ? "#142015" : "#1e1c1a";
@@ -4845,9 +4961,9 @@
     ctx.restore();
   }
 
-  const DOOR_W = 56 * DPR;
-  const DOOR_H = 90 * DPR;
-  const DOOR_INSET = 40 * DPR;
+  const DOOR_W = 56 * PX;
+  const DOOR_H = 90 * PX;
+  const DOOR_INSET = 40 * PX;
   function drawBlackOutsideMap(){
     const pad = 1e4;
     ctx.save();
@@ -4869,13 +4985,13 @@
       const h = vertical ? dw : dh;
       ctx.fillStyle = "#2a2520";
       ctx.strokeStyle = "rgba(180,160,120,0.6)";
-      ctx.lineWidth = 2 * DPR;
-      roundRect(x - w/2, y - h/2, w, h, 6 * DPR);
+      ctx.lineWidth = 2 * PX;
+      roundRect(x - w/2, y - h/2, w, h, 6 * PX);
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
       ctx.fillStyle = "rgba(120,100,80,0.5)";
-      roundRect(x - w/2 + 4*DPR, y - h/2 + 4*DPR, w - 8*DPR, h - 8*DPR, 4 * DPR);
+      roundRect(x - w/2 + 4*PX, y - h/2 + 4*PX, w - 8*PX, h - 8*PX, 4 * PX);
       ctx.fill();
     };
     drawDoor(mapW / 2, d, false);           // north
@@ -4899,8 +5015,9 @@
       }
     }
 
-    ctx.clearRect(0,0,W,H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = "#000";
@@ -4947,7 +5064,7 @@
       for(const p of particles) drawParticle(p);
       if(extractionFlameRing){
         const ringR = Math.min(extractionFlameRing.maxR, (extractionFlameRing.t / extractionFlameRing.duration) * extractionFlameRing.maxR);
-        const ringW = 56*DPR;
+        const ringW = 56*PX;
         ctx.save();
         const cx = player.x, cy = player.y;
         const grad = ctx.createRadialGradient(cx, cy, Math.max(0, ringR - ringW), cx, cy, ringR + ringW);
@@ -4982,7 +5099,7 @@
         ctx.globalAlpha = 1 - t;
         ctx.fillStyle = p.col;
         ctx.shadowColor = p.col;
-        ctx.shadowBlur = 12*DPR;
+        ctx.shadowBlur = 12*PX;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r*(1+t), 0, Math.PI*2);
         ctx.fill();
@@ -5024,13 +5141,13 @@
     if(extractionCountdown!=null && extractionCountdown>0){
       const sec = Math.ceil(extractionCountdown);
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.font = `bold ${Math.min(72, W/8)*DPR}px ui-sans-serif`;
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.font = `bold ${Math.min(72, W/8)*PX}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(255,200,80,0.95)";
       ctx.shadowColor = "rgba(255,180,50,0.9)";
-      ctx.shadowBlur = 20*DPR;
+      ctx.shadowBlur = 20*PX;
       ctx.fillText("Extraction: " + sec, W/2, H*0.22);
       ctx.restore();
     }
@@ -5040,14 +5157,14 @@
       ctx.globalAlpha=0.92;
       ctx.fillStyle="rgba(0,0,0,0.35)";
       ctx.fillRect(0,0,W,H);
-      ctx.font=`bold ${Math.min(72, W/10)*DPR}px ui-sans-serif`;
+      ctx.font=`bold ${Math.min(72, W/10)*PX}px ui-sans-serif`;
       ctx.textAlign="center";
       ctx.textBaseline="middle";
       ctx.fillStyle="rgba(255,220,100,0.98)";
       ctx.shadowColor="rgba(255,200,80,0.9)";
-      ctx.shadowBlur=24*DPR;
+      ctx.shadowBlur=24*PX;
       ctx.fillText("Victory!", W/2, H*0.32);
-      ctx.font=`${14*DPR}px ui-sans-serif`;
+      ctx.font=`${14*PX}px ui-sans-serif`;
       ctx.fillStyle="rgba(234,242,255,0.9)";
       ctx.shadowBlur=0;
       ctx.fillText("Collect XP — press M or Esc for menu", W/2, H*0.42);
@@ -5061,14 +5178,14 @@
       const sx = camOffsetX + tutorialOverlay.focusX;
       const sy = camOffsetY + tutorialOverlay.focusY;
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(0, 0, W, H);
       ctx.strokeStyle = "rgba(255,220,80,0.95)";
-      ctx.lineWidth = 4 * DPR;
+      ctx.lineWidth = 4 * PX;
       ctx.shadowColor = "rgba(255,200,50,0.9)";
-      ctx.shadowBlur = 24 * DPR;
-      const ringR = 48 * DPR;
+      ctx.shadowBlur = 24 * PX;
+      const ringR = 48 * PX;
       ctx.beginPath();
       ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
       ctx.stroke();
@@ -5078,13 +5195,13 @@
     // Tutorial countdown 3-2-1
     if(tutorialCountdown !== null && tutorialCountdown > 0){
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       ctx.font = `bold ${Math.min(120, W/5)}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(255,240,180,0.98)";
       ctx.shadowColor = "rgba(255,200,80,0.9)";
-      ctx.shadowBlur = 20 * DPR;
+      ctx.shadowBlur = 20 * PX;
       ctx.fillText(String(tutorialCountdown), W/2, H/2);
       ctx.restore();
     }
@@ -5132,7 +5249,7 @@
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.beginPath();
-    ctx.ellipse(x, y + 10*DPR, r*1.2, r*0.5, 0, 0, Math.PI*2);
+    ctx.ellipse(x, y + 10*PX, r*1.2, r*0.5, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
     ctx.save();
@@ -5145,7 +5262,7 @@
     ctx.ellipse(x, y, r*1.1, r*0.85, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.strokeStyle = "rgba(40,10,8,0.8)";
-    ctx.lineWidth = 2*DPR;
+    ctx.lineWidth = 2*PX;
     ctx.stroke();
     ctx.restore();
   }
@@ -5169,7 +5286,7 @@
       bodyGrad.addColorStop(1, "rgba(30,50,90,0.95)");
       ctx.fillStyle=bodyGrad;
       ctx.strokeStyle="rgba(200,220,255,0.35)";
-      ctx.lineWidth=2*DPR;
+      ctx.lineWidth=2*PX;
       ctx.beginPath();
       ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
       ctx.fill();
@@ -5184,12 +5301,12 @@
       ctx.fillStyle = domeGrad;
       ctx.fill();
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
-      ctx.lineWidth = 1.5*DPR;
+      ctx.lineWidth = 1.5*PX;
       ctx.stroke();
-      ctx.font = `${16*DPR}px ui-sans-serif`;
+      ctx.font = `${16*PX}px ui-sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillStyle="rgba(0,0,0,0.65)";
-      ctx.fillText("😺", player.x, player.y+1*DPR);
+      ctx.fillText("😺", player.x, player.y+1*PX);
       ctx.restore();
     }
 
@@ -5197,7 +5314,7 @@
     ctx.globalAlpha=0.18;
     ctx.fillStyle="rgba(0,0,0,0.7)";
     ctx.beginPath();
-    ctx.ellipse(player.x, player.y+10*DPR, player.r*1.05, player.r*0.70, 0, 0, Math.PI*2);
+    ctx.ellipse(player.x, player.y+10*PX, player.r*1.05, player.r*0.70, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
 
@@ -5214,7 +5331,7 @@
     if (hasFront && hasBack) {
       const vy = player.vy || 0;
       const speed = Math.sqrt((player.vx||0)**2 + (player.vy||0)**2);
-      const standing = speed <= 0.5*DPR;
+      const standing = speed <= 0.5*PX;
       const lastD = player.lastDir || "front";
       let img = null;
       if (standing) {
@@ -5256,7 +5373,7 @@
       ctx.save();
       ctx.globalAlpha=0.25;
       ctx.strokeStyle="rgba(120,180,255,0.85)";
-      ctx.lineWidth=4*DPR;
+      ctx.lineWidth=4*PX;
       ctx.beginPath();
       ctx.arc(player.x, player.y, player.r*2.0, 0, Math.PI*2);
       ctx.stroke();
@@ -5268,9 +5385,9 @@
       ctx.save();
       ctx.globalAlpha = 0.18 + pct*0.18;
       ctx.strokeStyle = "rgba(78,166,255,0.92)";
-      ctx.lineWidth = 3*DPR;
+      ctx.lineWidth = 3*PX;
       ctx.beginPath();
-      ctx.arc(player.x, player.y, player.r+6*DPR, 0, Math.PI*2);
+      ctx.arc(player.x, player.y, player.r+6*PX, 0, Math.PI*2);
       ctx.stroke();
       ctx.restore();
     }
@@ -5279,9 +5396,9 @@
       ctx.save();
       ctx.globalAlpha = 0.22;
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
-      ctx.lineWidth = 2*DPR;
+      ctx.lineWidth = 2*PX;
       ctx.beginPath();
-      ctx.arc(player.x, player.y, player.r+10*DPR + Math.sin(t*18)*2*DPR, 0, Math.PI*2);
+      ctx.arc(player.x, player.y, player.r+10*PX + Math.sin(t*18)*2*PX, 0, Math.PI*2);
       ctx.stroke();
       ctx.restore();
     }
@@ -5297,7 +5414,7 @@
     ctx.globalAlpha=0.15;
     ctx.fillStyle="rgba(0,0,0,0.8)";
     ctx.beginPath();
-    ctx.ellipse(e.x, e.y+6*DPR, e.r*0.54, e.r*0.35, 0, 0, Math.PI*2);
+    ctx.ellipse(e.x, e.y+6*PX, e.r*0.54, e.r*0.35, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
 
@@ -5323,11 +5440,11 @@
         ctx.restore();
       } else {
         ctx.save();
-        ctx.font = `${18*DPR}px ui-sans-serif`;
+        ctx.font = `${18*PX}px ui-sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = "rgba(255,255,255,0.92)";
-        ctx.fillText(e.icon, e.x, e.y + 1*DPR);
+        ctx.fillText(e.icon, e.x, e.y + 1*PX);
         ctx.restore();
       }
     } else {
@@ -5340,7 +5457,7 @@
       grad.addColorStop(1, "rgba(6,8,18,0.95)");
       ctx.fillStyle=grad;
       ctx.strokeStyle = isBoss ? "rgba(255,210,77,0.55)" : e.elite ? "rgba(255,138,42,0.42)" : "rgba(255,255,255,0.12)";
-      ctx.lineWidth=2*DPR;
+      ctx.lineWidth=2*PX;
       ctx.beginPath();
       ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
       ctx.fill();
@@ -5357,16 +5474,16 @@
       }
 
       ctx.save();
-      ctx.font = `${(isBoss?30:(e.elite?22:18))*DPR}px ui-sans-serif`;
+      ctx.font = `${(isBoss?30:(e.elite?22:18))*PX}px ui-sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillStyle="rgba(255,255,255,0.92)";
-      ctx.fillText(e.icon, e.x, e.y+1*DPR);
+      ctx.fillText(e.icon, e.x, e.y+1*PX);
       ctx.restore();
     }
 
     // HP bar
-    const bw=e.r*2.2, bh=6*DPR;
-    const bx=e.x-bw/2, by=e.y-e.r-14*DPR;
+    const bw=e.r*2.2, bh=6*PX;
+    const bx=e.x-bw/2, by=e.y-e.r-14*PX;
     ctx.save();
     ctx.globalAlpha=0.85;
     ctx.fillStyle="rgba(255,255,255,0.10)";
@@ -5406,7 +5523,7 @@
     const r=baseR*sizePulse;
 
     ctx.save();
-    ctx.translate(L.x, L.y+16*DPR);
+    ctx.translate(L.x, L.y+16*PX);
 
     const grad=ctx.createRadialGradient(-r*0.35, -r*0.45, 2, 0, 0, r*2.0);
     grad.addColorStop(0, "rgba(255,255,255,0.26)");
@@ -5417,19 +5534,19 @@
     ctx.arc(0,0,r,0,Math.PI*2);
     ctx.fill();
 
-    ctx.font=`${(20*1.5)*DPR}px ui-sans-serif`;
+    ctx.font=`${(20*1.5)*PX}px ui-sans-serif`;
     ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillStyle="rgba(255,255,255,0.96)";
-    ctx.fillText(it.icon, 0, 1*DPR);
+    ctx.fillText(it.icon, 0, 1*PX);
 
     if(L.devGift){
-      ctx.font = `${12*DPR}px ui-sans-serif`;
+      ctx.font = `${12*PX}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       ctx.fillStyle = "rgba(255,255,255,0.98)";
       ctx.strokeStyle = "rgba(0,0,0,0.8)";
-      ctx.lineWidth = 2 * DPR;
-      const labelY = -r - 8*DPR;
+      ctx.lineWidth = 2 * PX;
+      const labelY = -r - 8*PX;
       ctx.strokeText("Gift from dev❤️", 0, labelY);
       ctx.fillText("Gift from dev❤️", 0, labelY);
     }
@@ -5438,7 +5555,7 @@
   }
 
   function drawBloodPool(pool){
-    const mainR = pool.mainR != null ? pool.mainR : 14 * DPR;
+    const mainR = pool.mainR != null ? pool.mainR : 14 * PX;
     const ageSec = (now() - pool.spawnT) / 1000;
     const coagulated = !!pool.coagulated;
     const expired = !!pool.expired;
@@ -5448,7 +5565,7 @@
     ctx.globalAlpha = expired ? 0.7 : 0.96;
     ctx.fillStyle = col;
     ctx.strokeStyle = "rgba(0,0,0,0.4)";
-    ctx.lineWidth = Math.max(1, 2 * DPR * (pool.scale || 1));
+    ctx.lineWidth = Math.max(1, 2 * PX * (pool.scale || 1));
 
     ctx.beginPath();
     ctx.arc(pool.x, pool.y, mainR, 0, Math.PI * 2);
@@ -5475,10 +5592,10 @@
   function drawBloodGatherBar(){
     if(!gatheringPool) return;
     const t = clamp(gatheringAccumulatedMs / (BLOOD_GATHER_SEC * 1000), 0, 1);
-    const bw = 72 * DPR;
-    const bh = 12 * DPR;
+    const bw = 72 * PX;
+    const bh = 12 * PX;
     const x = player.x - bw / 2;
-    const y = player.y - player.r - 32 * DPR;
+    const y = player.y - player.r - 32 * PX;
     const fillW = bw * (1 - t);
     ctx.save();
     try {
@@ -5486,15 +5603,15 @@
       ctx.globalAlpha = 1;
       ctx.fillStyle = "rgba(0,0,0,0.85)";
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
-      ctx.lineWidth = 3 * DPR;
+      ctx.lineWidth = 3 * PX;
       roundRect(x, y, bw, bh, 999);
       ctx.fill();
       ctx.stroke();
-      if(fillW > 3 * DPR){
-        const innerW = fillW - 2 * DPR;
+      if(fillW > 3 * PX){
+        const innerW = fillW - 2 * PX;
         if(innerW > 0){
           ctx.fillStyle = "rgba(255,240,200,0.98)";
-          roundRect(x + (bw - fillW), y + 2*DPR, innerW, bh - 4*DPR, 999);
+          roundRect(x + (bw - fillW), y + 2*PX, innerW, bh - 4*PX, 999);
           ctx.fill();
         }
       }
@@ -5511,12 +5628,22 @@
       ? extractionImg
       : (idle && idle.complete && idle.naturalWidth>0 ? idle : null);
     const baseSize = 0.5 * Math.min(W, H);
-    const size = Math.max(160 * DPR, baseSize);
+    const maxSize = Math.max(160 * PX, baseSize);
+    const runSize = 2 * (player && player.r != null ? player.r : 20) * PX;
+    const minSize = Math.max(runSize, 48 * PX);
+    let size = maxSize;
+    if (extractionLiftoff) {
+      const ign = extractionLiftoff.ignitionDuration || 0;
+      const liftDur = extractionLiftoff.duration - ign;
+      const liftProgress = extractionLiftoff.t <= ign ? 0 : Math.min(1, (extractionLiftoff.t - ign) / liftDur);
+      const easeIn = liftProgress * liftProgress;
+      size = minSize + (maxSize - minSize) * easeIn;
+    }
     const w = size, h = size;
     const cx = W * 0.5;
     const cy = H * 0.5;
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.globalAlpha = 1;
     if(img){
       ctx.imageSmoothingEnabled = false;
@@ -5539,10 +5666,10 @@
     const zone = level11Zones.find(z => z.id === level11WeldingZoneId);
     if(!zone) return;
     const t = clamp(level11WeldMs / (LEVEL11_WELD_DURATION_SEC * 1000), 0, 1);
-    const bw = 72 * DPR;
-    const bh = 12 * DPR;
+    const bw = 72 * PX;
+    const bh = 12 * PX;
     const x = player.x - bw / 2;
-    const y = player.y - player.r - 52 * DPR; // slightly above blood gather bar
+    const y = player.y - player.r - 52 * PX; // slightly above blood gather bar
     const fillW = bw * (1 - t);
     ctx.save();
     try {
@@ -5550,15 +5677,15 @@
       ctx.globalAlpha = 1;
       ctx.fillStyle = "rgba(0,0,0,0.9)";
       ctx.strokeStyle = "rgba(255,220,120,0.95)";
-      ctx.lineWidth = 3 * DPR;
+      ctx.lineWidth = 3 * PX;
       roundRect(x, y, bw, bh, 999);
       ctx.fill();
       ctx.stroke();
-      if(fillW > 3 * DPR){
-        const innerW = fillW - 2 * DPR;
+      if(fillW > 3 * PX){
+        const innerW = fillW - 2 * PX;
         if(innerW > 0){
           ctx.fillStyle = "rgba(255,210,80,0.98)";
-          roundRect(x + (bw - fillW), y + 2*DPR, innerW, bh - 4*DPR, 999);
+          roundRect(x + (bw - fillW), y + 2*PX, innerW, bh - 4*PX, 999);
           ctx.fill();
         }
       }
@@ -5576,8 +5703,8 @@
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = col;
     ctx.shadowColor = col;
-    ctx.shadowBlur = 24*DPR;
-    ctx.lineWidth = 4*DPR;
+    ctx.shadowBlur = 24*PX;
+    ctx.lineWidth = 4*PX;
     ctx.beginPath();
     ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI*2);
     ctx.stroke();
@@ -5586,23 +5713,23 @@
   function drawTokenPop(pop){
     const t = pop.t / pop.life;
     const alpha = 1 - t * t;
-    const floatY = pop.y - 28*DPR - pop.t * 70*DPR;
+    const floatY = pop.y - 28*PX - pop.t * 70*PX;
     const scale = 1 + t * 0.4;
-    const r = 14 * DPR * scale;
+    const r = 14 * PX * scale;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(pop.x, floatY);
     ctx.scale(scale, scale);
     ctx.shadowColor = "rgba(255,212,106,0.9)";
-    ctx.shadowBlur = 16*DPR;
+    ctx.shadowBlur = 16*PX;
     ctx.fillStyle = "rgba(255,212,106,0.95)";
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI*2);
     ctx.fill();
     ctx.strokeStyle = "rgba(255,255,255,0.5)";
-    ctx.lineWidth = 2*DPR;
+    ctx.lineWidth = 2*PX;
     ctx.stroke();
-    ctx.font = `bold ${12*DPR}px ui-sans-serif`;
+    ctx.font = `bold ${12*PX}px ui-sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -5612,13 +5739,13 @@
   function drawParticle(p){
     const t=p.t/p.life;
     if(p.pulse){
-      const r=lerp(10*DPR, 96*DPR, t);
+      const r=lerp(10*PX, 96*PX, t);
       ctx.save();
       ctx.globalAlpha=(1-t)*0.55;
       ctx.strokeStyle=p.col;
       ctx.shadowColor=p.col;
-      ctx.shadowBlur=28*DPR;
-      ctx.lineWidth=4*DPR;
+      ctx.shadowBlur=28*PX;
+      ctx.lineWidth=4*PX;
       ctx.beginPath();
       ctx.arc(p.x,p.y,r,0,Math.PI*2);
       ctx.stroke();
@@ -5629,7 +5756,7 @@
     ctx.globalAlpha=(1-t)*0.95;
     if(p.glow){
       ctx.shadowColor=p.col;
-      ctx.shadowBlur=18*DPR;
+      ctx.shadowBlur=18*PX;
     }
     ctx.fillStyle=p.col;
     ctx.beginPath();
@@ -5641,19 +5768,19 @@
   function drawLevel11StatusHUD(){
     if(!currentLevelConfig || currentLevelConfig.id !== "1-1" || !level11Zones || !level11Zones.length) return;
     const text = `${level11ZonesCleared}/${level11Zones.length}`;
-    const padX = 10 * DPR;
-    const padY = 4 * DPR;
+    const padX = 10 * PX;
+    const padY = 4 * PX;
     ctx.save();
-    ctx.font = `${11*DPR}px ui-sans-serif`;
+    ctx.font = `${11*PX}px ui-sans-serif`;
     const tw = ctx.measureText(text).width;
     const bw = tw + padX * 2;
-    const bh = 18 * DPR;
+    const bh = 18 * PX;
     const x = W * 0.5 - bw / 2;
-    const y = 12 * DPR;
+    const y = 12 * PX;
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = "rgba(0,0,0,0.75)";
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
-    ctx.lineWidth = 1.5 * DPR;
+    ctx.lineWidth = 1.5 * PX;
     roundRect(x, y, bw, bh, 999);
     ctx.fill();
     ctx.stroke();
@@ -5681,7 +5808,7 @@
     const ang = Math.atan2(dyWorld, dxWorld);
     const px = W * 0.5;
     const py = H * 0.5;
-    const arrowLen = Math.min(dist * 0.5, 160 * DPR);
+    const arrowLen = Math.min(dist * 0.5, 160 * PX);
 
     // Blink strength over lifetime (4s) – fades slightly towards the end
     const age = t - delay;
@@ -5691,15 +5818,15 @@
     const alpha = (0.6 + 0.4 * blinkBase) * (1 - 0.2 * lifeFrac);
 
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.translate(px, py);
     ctx.rotate(ang);
 
-    const size = 32 * DPR;
+    const size = 32 * PX;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = "rgba(255,240,160,0.98)";
     ctx.shadowColor = "rgba(255,240,160,0.95)";
-    ctx.shadowBlur = 14 * DPR;
+    ctx.shadowBlur = 14 * PX;
 
     // Draw a thick arrow starting at player center and pointing towards the manhole
     ctx.beginPath();

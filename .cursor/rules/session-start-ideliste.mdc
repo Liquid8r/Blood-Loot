@@ -1,0 +1,21 @@
+---
+description: Ved ny økt – list idelisten fra ROADMAP-CHECKLIST.md først
+alwaysApply: true
+---
+
+# Blood Loot – Start av ny økt
+
+Når brukeren starter en ny økt (ny chat/session) på Blood Loot:
+
+1. **Les og list opp** hele sjekklisten fra `ROADMAP-CHECKLIST.md` for brukeren.
+2. **Anbefal rekkefølge** – foreslå hva som bør tas først (f.eks. ut fra avhengigheter og PROJECT-CONTEXT.md) før dere starter på andre oppgaver.
+3. Gjør dette **før** du implementerer eller planlegger andre ting, med mindre brukeren eksplisitt ber om noe annet.
+
+Idelisten ligger i: **ROADMAP-CHECKLIST.md** (root i prosjektet).
+
+---
+
+## Minnesnotater (planlagt til neste økt)
+
+- **Roadmap:** Sjekke av fullførte implementeringer på ROADMAP-CHECKLIST.md og legge til nye punkter.
+- **Tutorial overhaul:** Forbedre tutorial-systemet, bl.a. med en **kort forklaring på kontroller innledningsvis** (f.eks. ved første spillstart eller ved start av run).

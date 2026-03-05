@@ -1,0 +1,43 @@
+---
+description: Grunnregel for posisjonering av menyer og grafikk – designoppløsning 1920×1080
+globs: 
+  - "**/*.js"
+  - "**/*.css"
+  - "**/*.html"
+---
+
+# Blood Loot – UI og grafikk i designoppløsning
+
+Spillet bruker en **fast designoppløsning 1920×1080**. Alt layout og all grafikk skal implementeres i dette koordinatsystemet, slik at alle spillere ser det samme uavhengig av skjerm, nettleser eller zoom.
+
+## Hvordan det fungerer
+
+- **#app** i HTML er en container med fast størrelse 1920px × 1080px. Den skaleres (og sentreres/letterboxes) av JS ved `resize` så den alltid får plass i vinduet.
+- **Canvas** tegnes i 1920×1080 logiske piksler; 2D-context skaleres med DPR for skarpt bilde på HiDPI.
+- **Alle DOM-elementer** (HUD, menyer, bobler, toasts, overlay) ligger **innenfor #app** og posisjoneres med **design-piksler** (0–1920 horisontalt, 0–1080 vertikalt).
+- Konstanter: `DESIGN_W = 1920`, `DESIGN_H = 1080` i `main.js`. Hjelpefunksjonen `viewportToDesign(clientX, clientY)` konverterer mus/peker til design-koordinater ved behov.
+
+## Ved implementering av ny meny eller grafikk
+
+1. **Plassering**
+   - Bruk `position: absolute` (eller `fixed` bare hvis det er inni #app) og koordinater i **piksler** (px) i forhold til 1920×1080.
+   - Eksempel: øverst til venstre med margin 10px → `left: 10px; top: 10px`. Sentrert → `left: 50%; transform: translateX(-50%)` (prosent er av 1920).
+
+2. **Nye elementer i DOM**
+   - Legg nye paneler/overlays som barn av **#app** (eller av et eksisterende element inni #app, f.eks. `#overlay` eller `#hud`), **ikke** direkte på `document.body`. Bruk `appEl.appendChild(...)` eller plassering i overlay/hud, slik at de skaleres sammen med spillet.
+
+3. **Størrelser**
+   - Bruk px eller % av 1920×1080. Unngå `vw`/`vh` for elementer inni #app; de refererer til viewport, ikke design-rommet. Bruk `min(560px, calc(100% - 20px))` der 100% er av #app.
+
+4. **CSS**
+   - Stiler som gjelder inni #app finnes i `css/style.css`. Design-variabler: `--design-w: 1920`, `--design-h: 1080`, `--ui-margin: 10px`.
+
+5. **Canvas-tegning**
+   - Spillet bruker `W = 1920`, `H = 1080` og `PX = 1` for tegning. Alle posisjoner og størrelser i tegnekoden er i design-piksler; DPR håndteres via `ctx.setTransform(DPR,0,0,DPR,0,0)` i render.
+
+## Kort sjekkliste for ny UI
+
+- [ ] Elementet er inni #app (eller et barn av #app).
+- [ ] Posisjonering i px eller % av 1920×1080, ikke vw/vh for innholdet.
+- [ ] Dynamisk opprettede overlays appendes til `appEl` (eller overlay/hud), ikke `document.body`.
+- [ ] Eventuelle mus/peker-koordinater konverteres med `viewportToDesign(clientX, clientY)` hvis de skal brukes i design-rommet.
