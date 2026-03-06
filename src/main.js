@@ -86,7 +86,7 @@
   if(inventoryOverlayEl) inventoryOverlayEl.oncontextmenu = (e) => e.preventDefault();
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.005.0";
+  const GAME_VERSION = "1.005.1";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -958,7 +958,7 @@
   }
 
   // One-time reset: bump version to clear all progression for a clean release.
-  const AFFIXLOOT_STORAGE_VERSION = 5;
+  const AFFIXLOOT_STORAGE_VERSION = 6;
   (function resetProgressionIfNewVersion(){
     const key = "affixloot_storage_version";
     if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
@@ -5346,7 +5346,7 @@
       equipped.weapon = makeItem("weapon", "legendary");
     }
     if(currentLevelConfig && currentLevelConfig.id === "1-1" && !DEV_GIVE_LEGENDARY_WEAPON){
-      const devGiftItem = makeItem("weapon", "uncommon");
+      const devGiftItem = makeItem("weapon", "rare");
       devGiftItem.name = "Gift from dev❤️";
       const fountainCx = mapW / 2, fountainCy = mapH / 2;
       const distPlayerToFountain = Math.hypot(player.x - fountainCx, player.y - fountainCy);
