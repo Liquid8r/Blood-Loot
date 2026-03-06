@@ -850,6 +850,10 @@
       background: rgba(10,14,28,.72);
       box-shadow: 0 22px 70px rgba(0,0,0,.60);
       overflow:hidden;
+      transition: width .2s ease;
+    }
+    #overlayCard:has(.armoryWrap){
+      width: min(1280px, calc(100% - 40px));
     }
     #ovHead{
       padding:14px 14px 10px 14px;
@@ -1306,3 +1310,250 @@
     .inventoryItemTooltip .pillRow{ margin-top: 6px; }
     .inventoryItemTooltip .cmpDiffGood{ color: var(--good); }
     .inventoryItemTooltip .cmpDiffBad{ color: var(--bad); }
+
+    /* ========= Armory ========= */
+    .armoryWrap{
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 1200px;
+      min-height: 520px;
+    }
+    .armoryColumn{
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .armoryPanel{
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      padding: 16px;
+      flex: 1;
+    }
+    .armoryPanelTitle{
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 14px;
+      color: var(--text);
+      text-align: center;
+    }
+    .armoryGrid{
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .armoryCell{
+      aspect-ratio: 1;
+      min-width: 44px;
+      border-radius: 10px;
+      border: 2px dashed rgba(255,255,255,.2);
+      background: rgba(0,0,0,.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: border-color .15s, background .15s, transform .15s;
+    }
+    .armoryCell:hover{ border-color: rgba(255,255,255,.45); background: rgba(0,0,0,.35); }
+    .armoryCell.armorySelected{ border-color: var(--xp); border-style: solid; background: rgba(124,255,178,.12); }
+    .armoryDismantleCell{ border-color: rgba(255,100,100,.35); background: rgba(180,60,60,.12); }
+    .armoryDismantleCell:hover{ border-color: rgba(255,120,120,.55); background: rgba(200,70,70,.2); }
+    .armoryCellIcon{ font-size: 22px; line-height: 1; }
+    .armoryFooter{
+      margin-top: auto;
+      padding-top: 12px;
+    }
+    .armoryBtnFull{
+      width: 100%;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 800;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    .armoryBtnDismantle{
+      background: linear-gradient(135deg, #8B2020 0%, #C42020 100%);
+      border: 2px solid rgba(255,100,100,.5);
+      color: #fff;
+    }
+    .armoryBtnDismantle:hover{ background: linear-gradient(135deg, #A02525 0%, #D82828 100%); }
+    .armoryBtnDismantle:disabled{ opacity: 0.5; cursor: not-allowed; }
+    .armoryBtnBack{
+      background: rgba(60,60,70,.8);
+      border: 1px solid rgba(255,255,255,.2);
+      color: rgba(255,255,255,.8);
+      padding: 8px 16px;
+      font-size: 12px;
+    }
+    .armoryBtnBack:hover{ background: rgba(80,80,90,.9); }
+    .armoryScrapInfo{
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+      padding: 8px;
+      background: rgba(0,0,0,.2);
+      border-radius: 8px;
+    }
+    .armoryScrapInfo .scrapLine{ margin: 4px 0; }
+
+    /* ========= Intel Menu ========= */
+    #overlayCard:has(.intelWrap){
+      width: min(1400px, calc(100% - 40px));
+      max-height: calc(100vh - 60px);
+    }
+    .intelWrap{
+      display: flex;
+      flex-direction: column;
+      min-height: 600px;
+      max-height: calc(100vh - 180px);
+    }
+    .intelTabs{
+      display: flex;
+      gap: 4px;
+      border-bottom: 2px solid rgba(255,255,255,.1);
+      margin-bottom: 16px;
+    }
+    .intelTab{
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .intelTab:hover{ color: var(--text); }
+    .intelTab.active{
+      color: var(--xp);
+      border-bottom-color: var(--xp);
+    }
+    .intelContent{
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .intelGrid{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .intelCard{
+      background: rgba(0,0,0,.3);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 12px;
+      padding: 16px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s, transform .1s;
+    }
+    .intelCard:hover{
+      background: rgba(0,0,0,.45);
+      border-color: rgba(255,255,255,.2);
+      transform: translateY(-2px);
+    }
+    .intelCard.locked{
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .intelCard.locked:hover{
+      transform: none;
+    }
+    .intelCardHeader{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .intelCardIcon{
+      font-size: 28px;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,.05);
+      border-radius: 10px;
+    }
+    .intelCardTitle{
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+    }
+    .intelCardMeta{
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .intelCardDesc{
+      font-size: 13px;
+      color: rgba(255,255,255,.7);
+      line-height: 1.45;
+    }
+    .intelCardNew{
+      display: inline-block;
+      background: var(--xp);
+      color: #111;
+      font-size: 10px;
+      font-weight: 900;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 8px;
+      text-transform: uppercase;
+    }
+    .intelDetail{
+      background: rgba(0,0,0,.25);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .intelDetailTitle{
+      font-size: 22px;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+    .intelDetailMeta{
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .intelDetailBody{
+      font-size: 14px;
+      line-height: 1.65;
+      color: rgba(255,255,255,.85);
+    }
+    .intelDetailBody p{ margin: 0 0 12px 0; }
+    .intelBackBtn{
+      margin-top: 20px;
+    }
+    .intelFooter{
+      display: flex;
+      justify-content: flex-start;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,.08);
+      margin-top: 16px;
+    }
+    /* Bestiary specific */
+    .bestiaryCard .intelCardIcon{ background: rgba(180,60,60,.2); }
+    /* Achievement specific */
+    .achievementCard.unlocked .intelCardIcon{ background: rgba(124,255,178,.15); }
+    .achievementCard.unlocked .intelCardTitle{ color: var(--xp); }
+    .achievementProgress{
+      margin-top: 8px;
+      height: 6px;
+      background: rgba(255,255,255,.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .achievementProgressFill{
+      height: 100%;
+      background: var(--xp);
+      transition: width .3s ease;
+    }

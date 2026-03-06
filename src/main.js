@@ -51,6 +51,9 @@
   const ovBody = document.getElementById("ovBody");
   const toast = document.getElementById("toast");
   const bossBanner = document.getElementById("bossBanner");
+  
+  // Disable browser context menu on all menu overlays
+  if(overlay) overlay.oncontextmenu = (e) => e.preventDefault();
 
   const hpFill = document.getElementById("hpFill");
   const shFill = document.getElementById("shFill");
@@ -80,9 +83,10 @@
   const inventoryOverlayEl = document.getElementById("inventoryOverlay");
   const inventoryFigureEl = document.getElementById("inventoryFigure");
   const inventoryGridEl = document.getElementById("inventoryGrid");
+  if(inventoryOverlayEl) inventoryOverlayEl.oncontextmenu = (e) => e.preventDefault();
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.004.2";
+  const GAME_VERSION = "1.005.0";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -282,11 +286,20 @@
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
   const ENDLESS_RUN = true;
 
-  // ========= Levels (1-1 = current board; beat to unlock 1-2, then 1-3) =========
+  // ========= Levels. Biome 1 = mall/mice; 2+ = new areas, enemies may shoot. Beat to unlock next. =========
   const LEVELS = [
-    { id: "1-1", name: "1-1", roundSeconds: 150, spawnScale: 1,    enemyHpScale: 1,   bossHpScale: 1,   threatDivisor: 1800, minibossPct: 0.47, bossPct: 0.93 },
-    { id: "1-2", name: "1-2", roundSeconds: 155, spawnScale: 1.24, enemyHpScale: 1.34, bossHpScale: 1.30, threatDivisor: 1280, minibossPct: 0.44, bossPct: 0.88 },
-    { id: "1-3", name: "1-3", roundSeconds: 180, spawnScale: 1.28, enemyHpScale: 1.4,  bossHpScale: 1.35, threatDivisor: 1200, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "1-1", name: "1-1 Mall",   biome: 1, roundSeconds: 150, spawnScale: 1,    enemyHpScale: 1,   bossHpScale: 1,   threatDivisor: 1800, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "1-2", name: "1-2 Mall",   biome: 1, roundSeconds: 155, spawnScale: 1.24, enemyHpScale: 1.34, bossHpScale: 1.30, threatDivisor: 1280, minibossPct: 0.44, bossPct: 0.88 },
+    { id: "1-3", name: "1-3 Mall",   biome: 1, roundSeconds: 180, spawnScale: 1.28, enemyHpScale: 1.4,  bossHpScale: 1.35, threatDivisor: 1200, minibossPct: 0.47, bossPct: 0.93 },
+    { id: "2-1", name: "2-1 Outpost", biome: 2, roundSeconds: 160, spawnScale: 1.15, enemyHpScale: 1.2,  bossHpScale: 1.2,  threatDivisor: 1600, minibossPct: 0.45, bossPct: 0.90 },
+    { id: "2-2", name: "2-2 Outpost", biome: 2, roundSeconds: 170, spawnScale: 1.22, enemyHpScale: 1.28, bossHpScale: 1.28, threatDivisor: 1400, minibossPct: 0.46, bossPct: 0.90 },
+    { id: "2-3", name: "2-3 Outpost", biome: 2, roundSeconds: 185, spawnScale: 1.30, enemyHpScale: 1.38, bossHpScale: 1.35, threatDivisor: 1250, minibossPct: 0.47, bossPct: 0.92 },
+    { id: "3-1", name: "3-1 Tunnels", biome: 3, roundSeconds: 165, spawnScale: 1.20, enemyHpScale: 1.25, bossHpScale: 1.25, threatDivisor: 1500, minibossPct: 0.45, bossPct: 0.90 },
+    { id: "3-2", name: "3-2 Tunnels", biome: 3, roundSeconds: 175, spawnScale: 1.28, enemyHpScale: 1.35, bossHpScale: 1.32, threatDivisor: 1320, minibossPct: 0.46, bossPct: 0.91 },
+    { id: "3-3", name: "3-3 Tunnels", biome: 3, roundSeconds: 190, spawnScale: 1.35, enemyHpScale: 1.45, bossHpScale: 1.40, threatDivisor: 1180, minibossPct: 0.48, bossPct: 0.93 },
+    { id: "4-1", name: "4-1 Front",   biome: 4, roundSeconds: 170, spawnScale: 1.25, enemyHpScale: 1.30, bossHpScale: 1.30, threatDivisor: 1380, minibossPct: 0.46, bossPct: 0.91 },
+    { id: "4-2", name: "4-2 Front",   biome: 4, roundSeconds: 182, spawnScale: 1.33, enemyHpScale: 1.42, bossHpScale: 1.38, threatDivisor: 1220, minibossPct: 0.47, bossPct: 0.92 },
+    { id: "4-3", name: "4-3 Front",   biome: 4, roundSeconds: 195, spawnScale: 1.42, enemyHpScale: 1.52, bossHpScale: 1.48, threatDivisor: 1100, minibossPct: 0.49, bossPct: 0.94 },
   ];
   function getLevelConfig(id){
     return LEVELS.find(l=>l.id===id) || LEVELS[0];
@@ -295,7 +308,10 @@
   // ========= Quests / Contracts (grunnstruktur) =========
   const QUEST_STORAGE_KEY = "affixloot_quest_state";
   /** Ved ny lagret progresjon: legg nøkkel her OG i applyCleanProgressionState() lenger nede. */
-  const PROGRESSION_KEYS = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills"];
+  const BLOOD_RESEARCH_ML = { red: 200, blue: 250, green: 300, purple: 400 };
+  const BLOOD_POTION_ML = { speed: 150, dmg: 150, toxic: 150, speedAndDmg: 200 };
+  const POTION_EFFECT_PCT = { speed: 12, dmg: 15, toxic: 10, speedAndDmg: 8 };
+  const PROGRESSION_KEYS = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills","affixloot_blood_research","affixloot_potion_queue","affixloot_stash","affixloot_base_scrap","affixloot_equipped","affixloot_inventory","affixloot_intel","affixloot_achievements"];
   const QUEST_COOLDOWN_MS = 5 * 60 * 1000;
   const QUEST_DEFS = [
     {
@@ -478,7 +494,12 @@
     if(inCompare && k==="escape"){ e.preventDefault(); cancelCompare(); return; }
     if(inventoryOpen && k==="escape"){ e.preventDefault(); closeInventory(); return; }
     if(level11ControlsWrap && k==="escape"){ e.preventDefault(); const btn = level11ControlsWrap.querySelector("#level11ControlsGotIt"); if(btn) btn.click(); return; }
-    if(overlay && !overlay.classList.contains("hidden") && k==="escape"){ e.preventDefault(); if(ovBody && !ovBody.querySelector(".menuHubWrap")){ showMainMenu(); } return; }
+    if(overlay && !overlay.classList.contains("hidden") && k==="escape"){
+      e.preventDefault();
+      if(armoryConfirmOpen){ armoryConfirmOpen = false; refreshArmoryUI(); return; }
+      if(ovBody && !ovBody.querySelector(".menuHubWrap")){ showMainMenu(); }
+      return;
+    }
     if((k==="p" || k==="escape") && running){ togglePause(); return; }
     if(k==="x" && running && !paused && !inCompare && !victoryPhase && extractionCountdown==null && extractionLiftoff==null && player.hp>0){
       if(!bossKilled){
@@ -617,7 +638,26 @@
     levelBonuses:{},
   };
 
-  let equipped = {weapon:null, head:null, armor:null, feet:null, ring1:null, ring2:null, jewel:null};
+  const EQUIPPED_STORAGE_KEY = "affixloot_equipped";
+  let equipped = (function(){
+    try {
+      const raw = localStorage.getItem(EQUIPPED_STORAGE_KEY);
+      if (!raw) return {weapon:null, head:null, armor:null, feet:null, ring1:null, ring2:null, jewel:null};
+      const obj = JSON.parse(raw);
+      return {
+        weapon: obj.weapon || null,
+        head: obj.head || null,
+        armor: obj.armor || null,
+        feet: obj.feet || null,
+        ring1: obj.ring1 || null,
+        ring2: obj.ring2 || null,
+        jewel: obj.jewel || null
+      };
+    } catch (e) { return {weapon:null, head:null, armor:null, feet:null, ring1:null, ring2:null, jewel:null}; }
+  })();
+  function saveEquipped(){
+    try { localStorage.setItem(EQUIPPED_STORAGE_KEY, JSON.stringify(equipped)); } catch (e) {}
+  }
 
   // Inventory: items we carry; 10 base slots + bonus from Looter tree
   const INVENTORY_BASE_SLOTS = 10;
@@ -660,7 +700,57 @@
     return item;
   }
 
-  let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
+  // Armory stash: 20 slots stored at base
+  const STASH_MAX_SLOTS = 20;
+  const STASH_STORAGE_KEY = "affixloot_stash";
+  let stash = (function(){
+    try {
+      const raw = localStorage.getItem(STASH_STORAGE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.slice(0, STASH_MAX_SLOTS) : [];
+    } catch (e) { return []; }
+  })();
+  function saveStash(){
+    try { localStorage.setItem(STASH_STORAGE_KEY, JSON.stringify(stash.slice(0, STASH_MAX_SLOTS))); } catch (e) {}
+  }
+  function addToStash(item){
+    if (!item || stash.length >= STASH_MAX_SLOTS) return false;
+    stash.push(item);
+    saveStash();
+    // Track hoarder achievement
+    if(typeof updateAchievement === "function") updateAchievement("hoarder", stash.length, true);
+    return true;
+  }
+  function removeFromStash(index){
+    if (index < 0 || index >= stash.length) return null;
+    const item = stash.splice(index, 1)[0];
+    saveStash();
+    return item;
+  }
+
+  // Scrap: by rarity (common, uncommon, rare, legendary, set). Base storage + run tracking.
+  const SCRAP_STORAGE_KEY = "affixloot_base_scrap";
+  let baseScrap = (function(){
+    try {
+      const raw = localStorage.getItem(SCRAP_STORAGE_KEY);
+      if (!raw) return { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+      const o = JSON.parse(raw);
+      return { common: o.common|0, uncommon: o.uncommon|0, rare: o.rare|0, legendary: o.legendary|0, set: o.set|0 };
+    } catch (e) { return { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 }; }
+  })();
+  function saveBaseScrap(){
+    try { localStorage.setItem(SCRAP_STORAGE_KEY, JSON.stringify(baseScrap)); } catch (e) {}
+  }
+  let runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+  function getScrapValue(item){
+    if (!item) return 0;
+    const tier = item.tier || getItemTier(item);
+    const affixBonus = (item.affixes?.length || 0);
+    return tier + affixBonus;
+  }
+
+  let enemies=[], bullets=[], enemyProjectiles=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
   const MAX_LOOT_DROPS = 30;   // cap for long runs; remove oldest when exceeded
   const MAX_ORBS = 150;        // cap for long runs; remove oldest when exceeded
   // Level 1-1: welding interaction around manholes (similar to blood sampling)
@@ -827,6 +917,25 @@
     } catch(e){ return {}; }
   })();
 
+  let bloodResearch = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_blood_research");
+      if(!raw) return { speed: false, dmg: false, toxic: false, speedAndDmg: false };
+      const o = JSON.parse(raw);
+      return { speed: !!o.speed, dmg: !!o.dmg, toxic: !!o.toxic, speedAndDmg: !!o.speedAndDmg };
+    } catch(e){ return { speed: false, dmg: false, toxic: false, speedAndDmg: false }; }
+  })();
+  let potionQueue = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_potion_queue");
+      if(!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch(e){ return []; }
+  })();
+  function saveBloodResearch(){ try{ localStorage.setItem("affixloot_blood_research", JSON.stringify(bloodResearch)); }catch(e){} }
+  function savePotionQueue(){ try{ localStorage.setItem("affixloot_potion_queue", JSON.stringify(potionQueue)); }catch(e){} }
+
   /** Setter alle progresjonsvariabler til nullstate. Kalles ved reset. Ved ny progresjon: legg også til i PROGRESSION_KEYS og her. */
   function applyCleanProgressionState(){
     questState = { active: null, proposals: [], cooldownUntil: 0, completed: null };
@@ -837,6 +946,15 @@
     skillLevels = {};
     skillTreePurchased = {};
     baseBloodMl = {};
+    bloodResearch = { speed: false, dmg: false, toxic: false, speedAndDmg: false };
+    potionQueue = [];
+    stash = [];
+    baseScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+    equipped = { weapon: null, head: null, armor: null, feet: null, ring1: null, ring2: null, jewel: null };
+    inventory = [];
+    // Reset intel and achievements
+    if(typeof unlockedIntel !== "undefined") unlockedIntel = { orders: ["recruitment"], bestiary: [], seenIds: [] };
+    if(typeof achievementProgress !== "undefined") achievementProgress = {};
   }
 
   // One-time reset: bump version to clear all progression for a clean release.
@@ -1158,6 +1276,10 @@
       addPrim(setDef.primary, prim);
       addPrim(setDef.secondary, sec);
     }
+    // Chemistry Lab potions (consumed at run start)
+    msPct += (player.potionSpeedPct || 0) + (player.potionSpeedAndDmgPct || 0);
+    dmgPct += (player.potionDmgPct || 0) + (player.potionSpeedAndDmgPct || 0);
+    thornsPct += (player.potionToxicPct || 0) / 100;
 
     s.maxHP += hpFlat;
     s.maxShield += shieldFlat;
@@ -1300,6 +1422,1010 @@
     wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
     overlay.appendChild(wrap);
   }
+
+  // ========= Intel System =========
+  const INTEL_STORAGE_KEY = "affixloot_intel";
+  const ACHIEVEMENT_STORAGE_KEY = "affixloot_achievements";
+  let currentIntelTab = "orders";
+  let currentIntelDetail = null;
+
+  // Load unlocked intel from storage
+  let unlockedIntel = (function(){
+    try {
+      const raw = localStorage.getItem(INTEL_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : { orders: ["recruitment"], bestiary: [], seenIds: [] };
+    } catch(e){ return { orders: ["recruitment"], bestiary: [], seenIds: [] }; }
+  })();
+  function saveIntelProgress(){ localStorage.setItem(INTEL_STORAGE_KEY, JSON.stringify(unlockedIntel)); }
+
+  // Load achievement progress from storage
+  let achievementProgress = (function(){
+    try {
+      const raw = localStorage.getItem(ACHIEVEMENT_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch(e){ return {}; }
+  })();
+  function saveAchievementProgress(){ localStorage.setItem(ACHIEVEMENT_STORAGE_KEY, JSON.stringify(achievementProgress)); }
+
+  // Unlock intel entry
+  function unlockIntel(category, id){
+    if(!unlockedIntel[category]) unlockedIntel[category] = [];
+    if(!unlockedIntel[category].includes(id)){
+      unlockedIntel[category].push(id);
+      saveIntelProgress();
+      showSimpleToast(`New Intel: ${category === "orders" ? "Orders" : "Bestiary"}`);
+      return true;
+    }
+    return false;
+  }
+
+  // Mark intel as seen (removes "NEW" badge)
+  function markIntelSeen(id){
+    if(!unlockedIntel.seenIds) unlockedIntel.seenIds = [];
+    if(!unlockedIntel.seenIds.includes(id)){
+      unlockedIntel.seenIds.push(id);
+      saveIntelProgress();
+    }
+  }
+
+  // Update achievement progress
+  function updateAchievement(id, value, isAbsolute = false){
+    const ach = INTEL_ACHIEVEMENTS.find(a => a.id === id);
+    if(!ach) return;
+    const oldVal = achievementProgress[id] || 0;
+    const newVal = isAbsolute ? value : oldVal + value;
+    achievementProgress[id] = Math.min(newVal, ach.maxProgress);
+    if(oldVal < ach.maxProgress && achievementProgress[id] >= ach.maxProgress){
+      showSimpleToast(`Achievement Unlocked: ${ach.title}!`);
+      beep({freq:880,dur:0.15,type:"sine",gain:0.12});
+    }
+    saveAchievementProgress();
+  }
+
+  // Check if intel is unlocked
+  function isIntelUnlocked(category, id){
+    if(category === "orders"){
+      // Some orders are always unlocked
+      if(id === "recruitment") return true;
+      // Mission orders unlock when level is unlocked
+      if(id.startsWith("mission_")){
+        const levelId = id.replace("mission_", "").replace("_", "-");
+        return unlockedLevels.includes(levelId);
+      }
+    }
+    return unlockedIntel[category]?.includes(id) || false;
+  }
+
+  // Check if intel is new (unlocked but not seen)
+  function isIntelNew(category, id){
+    if(!isIntelUnlocked(category, id)) return false;
+    return !unlockedIntel.seenIds?.includes(id);
+  }
+
+  // Orders data - story/missions
+  const INTEL_ORDERS = [
+    {
+      id: "recruitment",
+      title: "Recruitment",
+      meta: "Priority: CLASSIFIED",
+      icon: "📋",
+      summary: "Your recruitment into the operation.",
+      content: `
+        <p>You are a former top-tier soldier and chemist. Retired on a remote island — until your old commander found you.</p>
+        <p>The world faces its greatest crisis. All other attempts have failed. You are the only one who can get close enough to the enemy to learn what we are up against.</p>
+        <p>We have no choice but to trust that you will come back.</p>
+        <p style="margin-top:16px; color:var(--muted); font-style:italic;">"The mission is simple: survive, gather intel, and report back. What you find down there... that's up to you to discover."</p>
+      `
+    },
+    {
+      id: "mission_1-1",
+      title: "Operation: First Blood",
+      meta: "Zone 1-1 • Sewers",
+      icon: "🎯",
+      summary: "Initial reconnaissance of the sewer system.",
+      content: `
+        <p><strong>MISSION BRIEFING:</strong></p>
+        <p>Intel suggests hostile activity in the old sewer network beneath the city. Your objective: infiltrate, gather samples, and extract.</p>
+        <p><strong>FIELD NOTES:</strong></p>
+        <p>The blood... it's thicker than normal. Viscosity readings are off the charts. Whatever these creatures are, they're not entirely organic anymore.</p>
+        <p>The sewers are crawling with infected civilians. They seem to congregate around certain areas — manholes that lead deeper underground.</p>
+        <p>Recommend further analysis at the Chemistry Lab.</p>
+      `
+    },
+    {
+      id: "blood_red_analysis",
+      title: "Blood Analysis: Red Variant",
+      meta: "Lab Report #001",
+      icon: "🩸",
+      summary: "Analysis of standard red blood samples.",
+      content: `
+        <p><strong>SAMPLE TYPE:</strong> Red Blood</p>
+        <p><strong>FINDINGS:</strong></p>
+        <p>The red blood samples show abnormal cell structure. Hemoglobin levels are elevated by 340%. The cells appear to be in a constant state of mutation.</p>
+        <p>Despite the anomalies, this appears to be the "base" infection state. All other variants seem to evolve from this.</p>
+        <p><strong>RECOMMENDATION:</strong> Continue collecting samples. More data required.</p>
+      `
+    },
+    {
+      id: "blood_green_discovery",
+      title: "Anomaly Report: Green Blood",
+      meta: "URGENT • Priority Alpha",
+      icon: "🧪",
+      summary: "Discovery of green-pigmented blood samples.",
+      content: `
+        <p><strong>PRIORITY ALERT:</strong></p>
+        <p>Field operatives have reported encountering creatures with GREEN blood. This is unprecedented.</p>
+        <p>The chemical composition is radically different from standard samples. Preliminary analysis suggests the presence of an unknown chlorophyll-like compound. Are these creatures... photosynthesizing?</p>
+        <p><strong>NEW ORDERS:</strong></p>
+        <p>Find out how the blood turned green. Capture samples. Identify the source of mutation.</p>
+        <p>Command suspects this may be connected to the enemy's core operations. This could be the key to understanding what we're really dealing with.</p>
+      `
+    },
+    {
+      id: "blood_blue_discovery",
+      title: "Anomaly Report: Blue Blood",
+      meta: "CLASSIFIED",
+      icon: "💎",
+      summary: "Cryogenic blood variant detected.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Blue Blood Variant</p>
+        <p>Temperature readings of infected creatures show sub-zero internal body temperature. The blood appears to have antifreeze properties.</p>
+        <p>These creatures are more resilient to damage and seem to slow down anything they touch. Extreme caution advised.</p>
+        <p><strong>HYPOTHESIS:</strong> Environmental adaptation? Or deliberate mutation?</p>
+      `
+    },
+    {
+      id: "blood_purple_discovery",
+      title: "Anomaly Report: Purple Blood",
+      meta: "TOP SECRET • Eyes Only",
+      icon: "☠️",
+      summary: "Highly dangerous purple blood variant.",
+      content: `
+        <p><strong>CLASSIFIED — EYES ONLY:</strong></p>
+        <p>Purple blood has been confirmed. This changes everything.</p>
+        <p>The creatures exhibiting this blood type are significantly more dangerous. Enhanced strength, regeneration, and what appears to be primitive intelligence. They coordinate. They plan.</p>
+        <p>Chemical analysis reveals a compound we've never seen before. It's not from this world.</p>
+        <p><strong>URGENT:</strong> We need to understand this evolution before it spreads further. The fate of the mission — and possibly humanity — depends on it.</p>
+      `
+    },
+    {
+      id: "first_extraction",
+      title: "Successful Extraction",
+      meta: "Field Report",
+      icon: "🚁",
+      summary: "Your first successful extraction from hostile territory.",
+      content: `
+        <p><strong>EXTRACTION CONFIRMED</strong></p>
+        <p>Outstanding work, operative. You've proven that survival is possible down there.</p>
+        <p>The samples you've brought back are invaluable. The Chemistry Lab is already processing them.</p>
+        <p>Rest up. There's more work to be done. The deeper zones are waiting, and command needs more intel.</p>
+        <p style="margin-top:16px; color:var(--muted); font-style:italic;">"Every extraction is a victory. Every sample brings us closer to the truth."</p>
+      `
+    },
+    {
+      id: "first_boss_kill",
+      title: "Alpha Hostile Eliminated",
+      meta: "Combat Report",
+      icon: "👑",
+      summary: "You've defeated your first boss creature.",
+      content: `
+        <p><strong>COMBAT REPORT — ALPHA HOSTILE DOWN</strong></p>
+        <p>Incredible. You've done what we thought was impossible — you've killed one of the alpha creatures.</p>
+        <p>Analysis of the remains reveals a more complex nervous system than the standard infected. These aren't just mindless monsters. They have hierarchy. Structure.</p>
+        <p><strong>NEW INTELLIGENCE:</strong> If there's a hierarchy, there's a leader. Find it. End it.</p>
+      `
+    }
+  ];
+
+  // Bestiary data - enemy types
+  const INTEL_BESTIARY = [
+    {
+      id: "basic_enemy",
+      title: "Infected Civilian",
+      meta: "Threat Level: LOW",
+      icon: "👤",
+      summary: "Standard infected humanoid.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Basic Hostile</p>
+        <p><strong>BEHAVIOR:</strong> Aggressive, slow-moving, attacks on sight. No self-preservation instinct.</p>
+        <p><strong>WEAKNESSES:</strong> Low health, predictable movement patterns, easily dispatched with sustained fire.</p>
+        <p><strong>NOTES:</strong> These appear to be the earliest stage of infection. Still partially human in form, but all higher brain function has ceased. They move toward sound and heat signatures.</p>
+        <p style="margin-top:12px; color:var(--muted);">Encountered: ${() => achievementProgress.kills_basic || 0} times</p>
+      `
+    },
+    {
+      id: "elite_enemy",
+      title: "Mutated Brute",
+      meta: "Threat Level: MEDIUM",
+      icon: "👹",
+      summary: "Enhanced infected with increased mass and aggression.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Elite Hostile</p>
+        <p><strong>BEHAVIOR:</strong> Highly aggressive, faster than standard infected. Will charge targets.</p>
+        <p><strong>WEAKNESSES:</strong> Slower turning speed, brief vulnerability window after charge attacks.</p>
+        <p><strong>NOTES:</strong> Extended exposure to the infection causes rapid muscle growth and bone density increase. These specimens are significantly more dangerous than standard infected.</p>
+        <p>The mutation appears to consume more energy — they drop more valuable blood samples.</p>
+      `
+    },
+    {
+      id: "miniboss_enemy",
+      title: "Tunnel Guardian",
+      meta: "Threat Level: HIGH",
+      icon: "🛡️",
+      summary: "Powerful creature guarding key locations.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Mini-Boss Hostile</p>
+        <p><strong>BEHAVIOR:</strong> Territorial. Guards specific locations, particularly manholes and tunnel entrances.</p>
+        <p><strong>WEAKNESSES:</strong> Larger hitbox, predictable patrol patterns.</p>
+        <p><strong>NOTES:</strong> These creatures seem to have a purpose beyond simple aggression. They guard access points, suggesting some form of hive intelligence directing them.</p>
+        <p>Eliminating them is often necessary to seal entry points and prevent reinforcements.</p>
+      `
+    },
+    {
+      id: "boss_sewer",
+      title: "The Sewer King",
+      meta: "Threat Level: EXTREME",
+      icon: "👑",
+      summary: "Massive alpha creature ruling the sewer depths.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Alpha Hostile</p>
+        <p><strong>BEHAVIOR:</strong> Territorial apex predator. Commands lesser infected through unknown means. Devastating melee attacks.</p>
+        <p><strong>WEAKNESSES:</strong> Slow movement speed. Attack patterns become predictable after observation.</p>
+        <p><strong>NOTES:</strong> The largest creature we've documented. It appears to be the source of the infection in the sewer zone, or at minimum, a critical node in the hive structure.</p>
+        <p>Killing the Sewer King may disrupt infected coordination in the area. High priority target.</p>
+      `
+    },
+    {
+      id: "ranged_enemy",
+      title: "Spitter",
+      meta: "Threat Level: MEDIUM",
+      icon: "🎯",
+      summary: "Infected capable of ranged acid attacks.",
+      content: `
+        <p><strong>CLASSIFICATION:</strong> Ranged Hostile</p>
+        <p><strong>BEHAVIOR:</strong> Maintains distance from targets. Spits corrosive projectiles.</p>
+        <p><strong>WEAKNESSES:</strong> Low health, slow projectile speed, vulnerable while "reloading".</p>
+        <p><strong>NOTES:</strong> A disturbing evolution. These infected have developed the ability to eject digestive acids as a weapon. The mutation has cost them melee capability but made them dangerous at range.</p>
+        <p>Priority target in mixed groups. Eliminate before engaging melee hostiles.</p>
+      `
+    }
+  ];
+
+  // Achievements data
+  const INTEL_ACHIEVEMENTS = [
+    { id: "first_mission", title: "First Blood", icon: "🩸", maxProgress: 1, summary: "Complete your first mission." },
+    { id: "first_extraction", title: "Extraction Expert", icon: "🚁", maxProgress: 1, summary: "Successfully extract from a mission." },
+    { id: "collector_100", title: "Blood Collector", icon: "🧴", maxProgress: 100, summary: "Collect 100ml of blood." },
+    { id: "collector_1000", title: "Blood Bank", icon: "🏦", maxProgress: 1000, summary: "Collect 1000ml of blood total." },
+    { id: "kills_10", title: "Exterminator", icon: "💀", maxProgress: 10, summary: "Defeat 10 enemies." },
+    { id: "kills_100", title: "Massacre", icon: "☠️", maxProgress: 100, summary: "Defeat 100 enemies." },
+    { id: "kills_500", title: "Genocide", icon: "🔥", maxProgress: 500, summary: "Defeat 500 enemies." },
+    { id: "boss_1", title: "Boss Slayer", icon: "👑", maxProgress: 1, summary: "Defeat your first boss." },
+    { id: "boss_5", title: "Alpha Hunter", icon: "🏆", maxProgress: 5, summary: "Defeat 5 bosses." },
+    { id: "elite_10", title: "Brute Force", icon: "👹", maxProgress: 10, summary: "Defeat 10 elite enemies." },
+    { id: "chemist_1", title: "Amateur Chemist", icon: "⚗️", maxProgress: 1, summary: "Craft your first potion." },
+    { id: "chemist_10", title: "Mad Scientist", icon: "🧬", maxProgress: 10, summary: "Craft 10 potions." },
+    { id: "speedrun_60", title: "Speed Demon", icon: "⚡", maxProgress: 1, summary: "Complete a mission in under 60 seconds." },
+    { id: "no_damage", title: "Untouchable", icon: "🛡️", maxProgress: 1, summary: "Complete a mission without taking damage." },
+    { id: "full_set", title: "Fashion Forward", icon: "👔", maxProgress: 1, summary: "Equip a complete matching set." },
+    { id: "hoarder", title: "Hoarder", icon: "📦", maxProgress: 20, summary: "Have 20 items in your stash." },
+    { id: "scrapper", title: "Scrapper", icon: "🔧", maxProgress: 50, summary: "Dismantle 50 items." }
+  ];
+
+  function showIntelMenu(tab = "orders", detailId = null){
+    currentIntelTab = tab;
+    currentIntelDetail = detailId;
+
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Intel";
+    ovSub.textContent="Classified information and mission data.";
+    ovBtns.innerHTML="";
+
+    const wrap = document.createElement("div");
+    wrap.className = "intelWrap";
+
+    // Tabs
+    const tabs = document.createElement("div");
+    tabs.className = "intelTabs";
+    const tabData = [
+      { id: "orders", label: "Orders" },
+      { id: "bestiary", label: "Bestiary" },
+      { id: "achievements", label: "Achievements" }
+    ];
+    tabData.forEach(t => {
+      const btn = document.createElement("button");
+      btn.className = "intelTab" + (currentIntelTab === t.id ? " active" : "");
+      btn.textContent = t.label;
+      btn.onclick = () => showIntelMenu(t.id, null);
+      tabs.appendChild(btn);
+    });
+    wrap.appendChild(tabs);
+
+    // Content area
+    const content = document.createElement("div");
+    content.className = "intelContent";
+
+    if(currentIntelDetail){
+      // Show detail view
+      renderIntelDetail(content);
+    } else {
+      // Show grid view
+      renderIntelGrid(content);
+    }
+
+    wrap.appendChild(content);
+
+    // Footer with Back button
+    const footer = document.createElement("div");
+    footer.className = "intelFooter";
+    const backBtn = document.createElement("button");
+    backBtn.className = "armoryBtnFull armoryBtnBack";
+    backBtn.style.width = "auto";
+    backBtn.textContent = "Back to Hub";
+    backBtn.onclick = () => showMainMenu();
+    footer.appendChild(backBtn);
+    wrap.appendChild(footer);
+
+    ovBody.innerHTML = "";
+    ovBody.appendChild(wrap);
+  }
+
+  function renderIntelGrid(container){
+    const grid = document.createElement("div");
+    grid.className = "intelGrid";
+
+    let items = [];
+    if(currentIntelTab === "orders") items = INTEL_ORDERS;
+    else if(currentIntelTab === "bestiary") items = INTEL_BESTIARY;
+    else if(currentIntelTab === "achievements") items = INTEL_ACHIEVEMENTS;
+
+    items.forEach(item => {
+      // Determine unlock state dynamically
+      let unlocked = false;
+      let isNew = false;
+      let progress = 0;
+
+      if(currentIntelTab === "orders"){
+        unlocked = isIntelUnlocked("orders", item.id);
+        isNew = isIntelNew("orders", item.id);
+      } else if(currentIntelTab === "bestiary"){
+        unlocked = isIntelUnlocked("bestiary", item.id);
+        isNew = isIntelNew("bestiary", item.id);
+      } else if(currentIntelTab === "achievements"){
+        progress = achievementProgress[item.id] || 0;
+        unlocked = progress >= item.maxProgress;
+      }
+
+      const card = document.createElement("div");
+      card.className = "intelCard" + 
+        (!unlocked ? " locked" : "") +
+        (currentIntelTab === "bestiary" ? " bestiaryCard" : "") +
+        (currentIntelTab === "achievements" ? " achievementCard" + (unlocked ? " unlocked" : "") : "");
+
+      let headerHtml = `
+        <div class="intelCardHeader">
+          <div class="intelCardIcon">${item.icon}</div>
+          <div>
+            <div class="intelCardTitle">${unlocked ? item.title : "???"}</div>
+            ${item.meta ? `<div class="intelCardMeta">${unlocked ? item.meta : "LOCKED"}</div>` : ""}
+          </div>
+          ${isNew ? '<span class="intelCardNew">New</span>' : ''}
+        </div>
+      `;
+
+      let bodyHtml = `<div class="intelCardDesc">${unlocked ? item.summary : "Complete requirements to unlock."}</div>`;
+
+      // Achievement progress bar
+      if(currentIntelTab === "achievements"){
+        const pct = Math.min(100, (progress / item.maxProgress) * 100);
+        bodyHtml += `
+          <div class="achievementProgress">
+            <div class="achievementProgressFill" style="width:${pct}%;"></div>
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">${progress} / ${item.maxProgress}</div>
+        `;
+      }
+
+      card.innerHTML = headerHtml + bodyHtml;
+
+      if(unlocked && currentIntelTab !== "achievements"){
+        card.onclick = () => {
+          markIntelSeen(item.id);
+          showIntelMenu(currentIntelTab, item.id);
+        };
+      }
+
+      grid.appendChild(card);
+    });
+
+    container.appendChild(grid);
+  }
+
+  function renderIntelDetail(container){
+    let items = [];
+    if(currentIntelTab === "orders") items = INTEL_ORDERS;
+    else if(currentIntelTab === "bestiary") items = INTEL_BESTIARY;
+
+    const item = items.find(i => i.id === currentIntelDetail);
+    if(!item || !isIntelUnlocked(currentIntelTab, item.id)){
+      showIntelMenu(currentIntelTab, null);
+      return;
+    }
+
+    const detail = document.createElement("div");
+    detail.className = "intelDetail";
+    detail.innerHTML = `
+      <div class="intelDetailTitle">${item.icon} ${item.title}</div>
+      <div class="intelDetailMeta">${item.meta || ""}</div>
+      <div class="intelDetailBody">${item.content}</div>
+      <button class="armoryBtnFull armoryBtnBack intelBackBtn" style="width:auto;">← Back to List</button>
+    `;
+    detail.querySelector("button").onclick = () => showIntelMenu(currentIntelTab, null);
+
+    container.appendChild(detail);
+  }
+
+  // Alias for backward compatibility
+  function showLoreMenu(){ showIntelMenu("orders", null); }
+
+  // Armory state
+  const DISMANTLE_MAX_SLOTS = 20;
+  let dismantleQueue = [];
+  let armorySelectedPanel = "inventory"; // "stash", "inventory", "dismantle"
+  let armorySelectedIndex = 0;
+  let armoryConfirmOpen = false;
+  let armoryConfirmIndex = 0; // 0 = confirm, 1 = back
+  let armoryKeyHandler = null;
+
+  function showArmory(){
+    const tooltipEl = document.getElementById("inventoryTooltip");
+    if(tooltipEl) tooltipEl.classList.add("hidden");
+    const overlayCard = document.getElementById("overlayCard");
+    if(overlayCard) overlayCard.classList.remove("mainMenuActive");
+    if(ovHead) ovHead.style.display="";
+    ovTitle.textContent="Armory";
+    ovSub.innerHTML=`<span style="color:var(--muted);">Left-click → Stash | Right-click → Dismantle | E/Q keys</span>`;
+    // Disable browser context menu on entire armory
+    ovBody.oncontextmenu = (e) => e.preventDefault();
+    ovBtns.innerHTML="";
+    armoryConfirmOpen = false;
+    armoryConfirmIndex = 0;
+
+    const wrap = document.createElement("div");
+    wrap.className = "armoryWrap";
+    wrap.id = "armoryWrap";
+
+    // LEFT COLUMN: Stash
+    const stashCol = document.createElement("div");
+    stashCol.className = "armoryColumn";
+    const stashPanel = document.createElement("div");
+    stashPanel.className = "armoryPanel";
+    stashPanel.id = "armoryStashPanel";
+    stashPanel.innerHTML = `<div class="armoryPanelTitle">Stash (${stash.length}/${STASH_MAX_SLOTS})</div>`;
+    const stashGrid = document.createElement("div");
+    stashGrid.className = "armoryGrid";
+    stashGrid.id = "armoryStashGrid";
+    for(let i = 0; i < STASH_MAX_SLOTS; i++){
+      const cell = document.createElement("div");
+      cell.className = "armoryCell";
+      cell.dataset.index = String(i);
+      cell.dataset.source = "stash";
+      stashGrid.appendChild(cell);
+    }
+    stashPanel.appendChild(stashGrid);
+    stashCol.appendChild(stashPanel);
+    // Back button under stash
+    const stashFooter = document.createElement("div");
+    stashFooter.className = "armoryFooter";
+    const backBtn = document.createElement("button");
+    backBtn.className = "armoryBtnFull armoryBtnBack";
+    backBtn.id = "armoryBackBtn";
+    backBtn.textContent = "Back";
+    backBtn.onclick = () => { 
+      for(const item of dismantleQueue){
+        if(inventory.length < getInventoryMaxSlots()) addToInventory(item);
+        else if(stash.length < STASH_MAX_SLOTS) addToStash(item);
+      }
+      dismantleQueue = [];
+      const tt = document.getElementById("inventoryTooltip"); 
+      if(tt) tt.classList.add("hidden"); 
+      showMainMenu(); 
+    };
+    stashFooter.appendChild(backBtn);
+    stashCol.appendChild(stashFooter);
+    wrap.appendChild(stashCol);
+
+    // CENTER COLUMN: Inventory
+    const invCol = document.createElement("div");
+    invCol.className = "armoryColumn";
+    const invPanel = document.createElement("div");
+    invPanel.className = "armoryPanel";
+    invPanel.id = "armoryInvPanel";
+    const maxSlots = getInventoryMaxSlots();
+    invPanel.innerHTML = `<div class="armoryPanelTitle">Inventory (${inventory.length}/${maxSlots})</div>`;
+    const invGrid = document.createElement("div");
+    invGrid.className = "armoryGrid";
+    invGrid.id = "armoryInvGrid";
+    for(let i = 0; i < maxSlots; i++){
+      const cell = document.createElement("div");
+      cell.className = "armoryCell";
+      cell.dataset.index = String(i);
+      cell.dataset.source = "inventory";
+      invGrid.appendChild(cell);
+    }
+    invPanel.appendChild(invGrid);
+    invCol.appendChild(invPanel);
+    // Scrap info under inventory
+    const invFooter = document.createElement("div");
+    invFooter.className = "armoryFooter";
+    const scrapInfo = document.createElement("div");
+    scrapInfo.className = "armoryScrapInfo";
+    scrapInfo.id = "armoryScrapPanel";
+    invFooter.appendChild(scrapInfo);
+    invCol.appendChild(invFooter);
+    wrap.appendChild(invCol);
+
+    // RIGHT COLUMN: Dismantle
+    const dismantleCol = document.createElement("div");
+    dismantleCol.className = "armoryColumn";
+    const dismantlePanel = document.createElement("div");
+    dismantlePanel.className = "armoryPanel";
+    dismantlePanel.id = "armoryDismantlePanel";
+    dismantlePanel.innerHTML = `<div class="armoryPanelTitle">Dismantle (${dismantleQueue.length}/${DISMANTLE_MAX_SLOTS})</div>`;
+    const dismantleGrid = document.createElement("div");
+    dismantleGrid.className = "armoryGrid";
+    dismantleGrid.id = "armoryDismantleGrid";
+    for(let i = 0; i < DISMANTLE_MAX_SLOTS; i++){
+      const cell = document.createElement("div");
+      cell.className = "armoryCell armoryDismantleCell";
+      cell.dataset.index = String(i);
+      cell.dataset.source = "dismantle";
+      dismantleGrid.appendChild(cell);
+    }
+    dismantlePanel.appendChild(dismantleGrid);
+    dismantleCol.appendChild(dismantlePanel);
+    // Dismantle button + info under dismantle panel
+    const dismantleFooter = document.createElement("div");
+    dismantleFooter.className = "armoryFooter";
+    dismantleFooter.id = "armoryDismantleFooter";
+    const dismantleBtn = document.createElement("button");
+    dismantleBtn.className = "armoryBtnFull armoryBtnDismantle";
+    dismantleBtn.id = "armoryDismantleBtn";
+    dismantleBtn.textContent = "Dismantle";
+    dismantleBtn.onclick = () => {
+      if(dismantleQueue.length === 0){ showSimpleToast("Nothing to dismantle"); return; }
+      armoryConfirmOpen = true;
+      armoryConfirmIndex = 0;
+      refreshArmoryUI();
+    };
+    dismantleFooter.appendChild(dismantleBtn);
+    // Pending scrap preview
+    const pendingScrap = document.createElement("div");
+    pendingScrap.className = "armoryScrapInfo";
+    pendingScrap.id = "armoryPendingScrap";
+    pendingScrap.style.marginTop = "8px";
+    dismantleFooter.appendChild(pendingScrap);
+    dismantleCol.appendChild(dismantleFooter);
+    wrap.appendChild(dismantleCol);
+
+    // Confirm dialog (overlay on top)
+    const confirmWrap = document.createElement("div");
+    confirmWrap.id = "armoryConfirmWrap";
+    confirmWrap.style.cssText = "display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 32px; background:rgba(20,20,25,.95); border-radius:16px; border:2px solid rgba(255,100,100,.4); z-index:100; text-align:center;";
+    wrap.appendChild(confirmWrap);
+    wrap.style.position = "relative";
+
+    ovBody.innerHTML = "";
+    ovBody.appendChild(wrap);
+
+    refreshArmoryUI();
+    bindArmoryCells();
+    bindArmoryKeyboard();
+  }
+
+  function getTotalDismantleScrap(){
+    const totals = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+    for(const item of dismantleQueue){
+      const rar = item.rarity || "common";
+      totals[rar] += getScrapValue(item);
+    }
+    return totals;
+  }
+
+  function refreshArmoryUI(){
+    // Update stash grid
+    const stashGrid = document.getElementById("armoryStashGrid");
+    if(stashGrid){
+      const cells = stashGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, i) => {
+        const item = stash[i] || null;
+        cell.innerHTML = "";
+        cell.classList.remove("armorySelected");
+        if(item){
+          const c = RAR[item.rarity]?.color || "#9AA3AE";
+          cell.innerHTML = `<div class="armoryCellIcon" style="color:${c};">${item.icon || "?"}</div>`;
+          cell.title = item.name || "";
+        } else { cell.title = ""; }
+        if(armorySelectedPanel === "stash" && armorySelectedIndex === i) cell.classList.add("armorySelected");
+      });
+    }
+    // Update stash title
+    const stashPanel = document.getElementById("armoryStashPanel");
+    if(stashPanel){
+      const title = stashPanel.querySelector(".armoryPanelTitle");
+      if(title) title.textContent = `Stash (${stash.length}/${STASH_MAX_SLOTS})`;
+    }
+
+    // Update inventory grid
+    const invGrid = document.getElementById("armoryInvGrid");
+    const maxSlots = getInventoryMaxSlots();
+    if(invGrid){
+      const cells = invGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, i) => {
+        const item = inventory[i] || null;
+        cell.innerHTML = "";
+        cell.classList.remove("armorySelected");
+        if(item){
+          const c = RAR[item.rarity]?.color || "#9AA3AE";
+          cell.innerHTML = `<div class="armoryCellIcon" style="color:${c};">${item.icon || "?"}</div>`;
+          cell.title = item.name || "";
+        } else { cell.title = ""; }
+        if(armorySelectedPanel === "inventory" && armorySelectedIndex === i) cell.classList.add("armorySelected");
+      });
+    }
+    // Update inventory title
+    const invPanel = document.getElementById("armoryInvPanel");
+    if(invPanel){
+      const title = invPanel.querySelector(".armoryPanelTitle");
+      if(title) title.textContent = `Inventory (${inventory.length}/${maxSlots})`;
+    }
+
+    // Update dismantle grid
+    const dismantleGrid = document.getElementById("armoryDismantleGrid");
+    if(dismantleGrid){
+      const cells = dismantleGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, i) => {
+        const item = dismantleQueue[i] || null;
+        cell.innerHTML = "";
+        cell.classList.remove("armorySelected");
+        if(item){
+          const c = RAR[item.rarity]?.color || "#9AA3AE";
+          cell.innerHTML = `<div class="armoryCellIcon" style="color:${c};">${item.icon || "?"}</div>`;
+          cell.title = item.name || "";
+        } else { cell.title = ""; }
+        if(armorySelectedPanel === "dismantle" && armorySelectedIndex === i) cell.classList.add("armorySelected");
+      });
+    }
+    // Update dismantle title
+    const dismantlePanel = document.getElementById("armoryDismantlePanel");
+    if(dismantlePanel){
+      const title = dismantlePanel.querySelector(".armoryPanelTitle");
+      if(title) title.textContent = `Dismantle (${dismantleQueue.length}/${DISMANTLE_MAX_SLOTS})`;
+    }
+
+    // Update base scrap panel (under inventory)
+    const scrapPanel = document.getElementById("armoryScrapPanel");
+    if(scrapPanel){
+      const hasBase = Object.values(baseScrap).some(v => v > 0);
+      if(hasBase){
+        let html = `<div style="font-weight:700; margin-bottom:4px;">Base Scrap</div>`;
+        html += Object.entries(baseScrap).filter(([r,v])=>v>0).map(([r,v])=>`<div class="scrapLine" style="color:${RAR[r]?.color||'#fff'};">${RAR[r]?.name||r}: ${v}</div>`).join("");
+        scrapPanel.innerHTML = html;
+      } else {
+        scrapPanel.innerHTML = `<div style="color:var(--muted);">No scrap stored</div>`;
+      }
+    }
+
+    // Update pending scrap preview (under dismantle)
+    const pendingScrap = document.getElementById("armoryPendingScrap");
+    if(pendingScrap){
+      if(dismantleQueue.length > 0){
+        const totals = getTotalDismantleScrap();
+        let html = `<div style="font-weight:700; margin-bottom:4px;">Will receive</div>`;
+        html += Object.entries(totals).filter(([r,v])=>v>0).map(([r,v])=>`<div class="scrapLine" style="color:${RAR[r]?.color||'#fff'};">+${v} ${RAR[r]?.name||r}</div>`).join("");
+        pendingScrap.innerHTML = html;
+        pendingScrap.style.display = "block";
+      } else {
+        pendingScrap.innerHTML = `<div style="color:var(--muted);">Add items to dismantle</div>`;
+        pendingScrap.style.display = "block";
+      }
+    }
+
+    // Update dismantle button
+    const dismantleBtn = document.getElementById("armoryDismantleBtn");
+    if(dismantleBtn){
+      dismantleBtn.textContent = dismantleQueue.length > 0 ? `Dismantle (${dismantleQueue.length})` : "Dismantle";
+      dismantleBtn.disabled = dismantleQueue.length === 0;
+    }
+
+    // Confirm dialog
+    const confirmWrap = document.getElementById("armoryConfirmWrap");
+    if(confirmWrap){
+      if(armoryConfirmOpen){
+        const totals = getTotalDismantleScrap();
+        let scrapSummary = Object.entries(totals).filter(([r,v])=>v>0).map(([r,v])=>`<span style="color:${RAR[r]?.color||'#fff'}; font-weight:700;">${v} ${RAR[r]?.name||r}</span>`).join(", ") || "0";
+        confirmWrap.style.display = "block";
+        confirmWrap.innerHTML = `
+          <div style="font-size:18px; font-weight:800; margin-bottom:12px; color:#fff;">Dismantle ${dismantleQueue.length} item${dismantleQueue.length>1?'s':''}?</div>
+          <div style="font-size:14px; margin-bottom:16px; color:rgba(255,255,255,.8);">You will receive: ${scrapSummary}</div>
+          <div style="display:flex; gap:12px; justify-content:center;">
+            <button class="armoryBtnFull armoryBtnDismantle" style="width:auto; padding:10px 24px; ${armoryConfirmIndex===0?'box-shadow:0 0 0 3px rgba(255,255,255,.5);':''}" id="armoryConfirmYes">Confirm</button>
+            <button class="armoryBtnFull armoryBtnBack" style="width:auto; padding:10px 24px; ${armoryConfirmIndex===1?'box-shadow:0 0 0 3px rgba(255,255,255,.5);':''}" id="armoryConfirmNo">Cancel</button>
+          </div>
+        `;
+        confirmWrap.querySelector("#armoryConfirmYes").onclick = executeDismantle;
+        confirmWrap.querySelector("#armoryConfirmNo").onclick = () => { armoryConfirmOpen = false; refreshArmoryUI(); };
+      } else {
+        confirmWrap.style.display = "none";
+        confirmWrap.innerHTML = "";
+      }
+    }
+  }
+
+  function executeDismantle(){
+    const count = dismantleQueue.length;
+    for(const item of dismantleQueue){
+      const rar = item.rarity || "common";
+      const val = getScrapValue(item);
+      baseScrap[rar] = (baseScrap[rar]||0) + val;
+    }
+    saveBaseScrap();
+    // Track scrapper achievement
+    updateAchievement("scrapper", count);
+    beep({freq:440,dur:0.12,type:"triangle",gain:0.1});
+    showSimpleToast(`Dismantled ${count} items`);
+    dismantleQueue = [];
+    armoryConfirmOpen = false;
+    refreshArmoryUI();
+  }
+
+  function bindArmoryCells(){
+    const stashGrid = document.getElementById("armoryStashGrid");
+    const invGrid = document.getElementById("armoryInvGrid");
+    const dismantleGrid = document.getElementById("armoryDismantleGrid");
+    const tooltipEl = document.getElementById("inventoryTooltip");
+    const appEl = document.getElementById("app");
+
+    function showArmoryTooltip(el, item) {
+      if (!tooltipEl || !item) return;
+      const slotKey = slotForType(item.type);
+      tooltipEl.innerHTML = buildInventoryItemTooltipContent(item, slotKey, false);
+      tooltipEl.classList.remove("hidden");
+      const rect = el.getBoundingClientRect();
+      const gap = 10;
+      requestAnimationFrame(() => {
+        const ttRect = tooltipEl.getBoundingClientRect();
+        const appRect = appEl ? appEl.getBoundingClientRect() : { left: 0, top: 0, width: 1920, height: 1080 };
+        const designW = 1920, designH = 1080;
+        const scaleX = appRect.width / designW, scaleY = appRect.height / designH;
+        let viewportLeft = rect.right + gap;
+        if (viewportLeft + ttRect.width > window.innerWidth - 8) viewportLeft = rect.left - ttRect.width - gap;
+        if (viewportLeft < 8) viewportLeft = 8;
+        let viewportTop = rect.top + (rect.height / 2) - (ttRect.height / 2);
+        if (viewportTop + ttRect.height > window.innerHeight - 8) viewportTop = window.innerHeight - ttRect.height - 8;
+        if (viewportTop < 8) viewportTop = 8;
+        const designLeft = (viewportLeft - appRect.left) / scaleX;
+        const designTop = (viewportTop - appRect.top) / scaleY;
+        tooltipEl.style.left = designLeft + "px";
+        tooltipEl.style.top = designTop + "px";
+      });
+    }
+    function hideArmoryTooltip() {
+      if (tooltipEl) tooltipEl.classList.add("hidden");
+    }
+
+    // Stash cells: click to move to inventory
+    if(stashGrid){
+      const cells = stashGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, idx) => {
+        const item = stash[idx] || null;
+        if(item){
+          cell.onmouseenter = () => showArmoryTooltip(cell, item);
+          cell.onmouseleave = () => hideArmoryTooltip();
+        } else {
+          cell.onmouseenter = null;
+          cell.onmouseleave = null;
+        }
+        cell.onclick = () => {
+          if(!item) return;
+          if(inventory.length < getInventoryMaxSlots()){
+            removeFromStash(idx);
+            addToInventory(item);
+            hideArmoryTooltip();
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else {
+            showSimpleToast("Inventory full");
+          }
+        };
+      });
+    }
+
+    // Inventory cells: left-click to stash, right-click to dismantle
+    if(invGrid){
+      const cells = invGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, idx) => {
+        const item = inventory[idx] || null;
+        if(item){
+          cell.onmouseenter = () => showArmoryTooltip(cell, item);
+          cell.onmouseleave = () => hideArmoryTooltip();
+        } else {
+          cell.onmouseenter = null;
+          cell.onmouseleave = null;
+        }
+        // Left-click: move to stash
+        cell.onclick = () => {
+          if(!item) return;
+          if(stash.length < STASH_MAX_SLOTS){
+            removeFromInventory(idx);
+            addToStash(item);
+            hideArmoryTooltip();
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else {
+            showSimpleToast("Stash full");
+          }
+        };
+        // Right-click: move to dismantle
+        cell.oncontextmenu = (e) => {
+          e.preventDefault();
+          if(!item) return;
+          if(dismantleQueue.length < DISMANTLE_MAX_SLOTS){
+            removeFromInventory(idx);
+            dismantleQueue.push(item);
+            hideArmoryTooltip();
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else {
+            showSimpleToast("Dismantle queue full");
+          }
+        };
+      });
+    }
+
+    // Dismantle cells: click to move back to inventory
+    if(dismantleGrid){
+      const cells = dismantleGrid.querySelectorAll(".armoryCell");
+      cells.forEach((cell, idx) => {
+        const item = dismantleQueue[idx] || null;
+        if(item){
+          cell.onmouseenter = () => showArmoryTooltip(cell, item);
+          cell.onmouseleave = () => hideArmoryTooltip();
+        } else {
+          cell.onmouseenter = null;
+          cell.onmouseleave = null;
+        }
+        cell.onclick = () => {
+          if(!item) return;
+          if(inventory.length < getInventoryMaxSlots()){
+            dismantleQueue.splice(idx, 1);
+            addToInventory(item);
+            hideArmoryTooltip();
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else {
+            showSimpleToast("Inventory full");
+          }
+        };
+      });
+    }
+  }
+
+  function bindArmoryKeyboard(){
+    if(armoryKeyHandler) document.removeEventListener("keydown", armoryKeyHandler);
+    
+    armoryKeyHandler = (e) => {
+      const armoryWrap = document.getElementById("armoryWrap");
+      if(!armoryWrap) return;
+      
+      const k = e.key.toLowerCase();
+      
+      // Handle confirm dialog
+      if(armoryConfirmOpen){
+        if(k === "arrowleft" || k === "a"){
+          e.preventDefault();
+          armoryConfirmIndex = 0;
+          refreshArmoryUI();
+        } else if(k === "arrowright" || k === "d"){
+          e.preventDefault();
+          armoryConfirmIndex = 1;
+          refreshArmoryUI();
+        } else if(k === "e" || k === " " || k === "enter"){
+          e.preventDefault();
+          if(armoryConfirmIndex === 0) executeDismantle();
+          else { armoryConfirmOpen = false; refreshArmoryUI(); }
+        } else if(k === "escape"){
+          e.preventDefault();
+          armoryConfirmOpen = false;
+          refreshArmoryUI();
+        }
+        return;
+      }
+
+      // Navigation
+      const maxSlots = { stash: STASH_MAX_SLOTS, inventory: getInventoryMaxSlots(), dismantle: DISMANTLE_MAX_SLOTS };
+      const cols = 5;
+
+      if(k === "arrowup" || k === "w"){
+        e.preventDefault();
+        armorySelectedIndex = Math.max(0, armorySelectedIndex - cols);
+        refreshArmoryUI();
+      } else if(k === "arrowdown" || k === "s"){
+        e.preventDefault();
+        armorySelectedIndex = Math.min(maxSlots[armorySelectedPanel] - 1, armorySelectedIndex + cols);
+        refreshArmoryUI();
+      } else if(k === "arrowleft" || k === "a"){
+        e.preventDefault();
+        if(armorySelectedIndex % cols === 0){
+          // Move to previous panel
+          if(armorySelectedPanel === "inventory"){ armorySelectedPanel = "stash"; armorySelectedIndex = Math.min(armorySelectedIndex, STASH_MAX_SLOTS - 1); }
+          else if(armorySelectedPanel === "dismantle"){ armorySelectedPanel = "inventory"; armorySelectedIndex = Math.min(armorySelectedIndex, getInventoryMaxSlots() - 1); }
+        } else {
+          armorySelectedIndex--;
+        }
+        refreshArmoryUI();
+      } else if(k === "arrowright" || k === "d"){
+        e.preventDefault();
+        if((armorySelectedIndex + 1) % cols === 0 || armorySelectedIndex === maxSlots[armorySelectedPanel] - 1){
+          // Move to next panel
+          if(armorySelectedPanel === "stash"){ armorySelectedPanel = "inventory"; armorySelectedIndex = Math.min(armorySelectedIndex, getInventoryMaxSlots() - 1); }
+          else if(armorySelectedPanel === "inventory"){ armorySelectedPanel = "dismantle"; armorySelectedIndex = Math.min(armorySelectedIndex, DISMANTLE_MAX_SLOTS - 1); }
+        } else {
+          armorySelectedIndex++;
+        }
+        refreshArmoryUI();
+      } else if(k === "e"){
+        // E = move to stash (from inv) or back to inventory (from stash/dismantle)
+        e.preventDefault();
+        if(armorySelectedPanel === "stash"){
+          const item = stash[armorySelectedIndex];
+          if(item && inventory.length < getInventoryMaxSlots()){
+            removeFromStash(armorySelectedIndex);
+            addToInventory(item);
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else if(item) showSimpleToast("Inventory full");
+        } else if(armorySelectedPanel === "inventory"){
+          const item = inventory[armorySelectedIndex];
+          if(item){
+            if(stash.length < STASH_MAX_SLOTS){
+              removeFromInventory(armorySelectedIndex);
+              addToStash(item);
+              refreshArmoryUI();
+              bindArmoryCells();
+            } else showSimpleToast("Stash full");
+          }
+        } else if(armorySelectedPanel === "dismantle"){
+          const item = dismantleQueue[armorySelectedIndex];
+          if(item && inventory.length < getInventoryMaxSlots()){
+            dismantleQueue.splice(armorySelectedIndex, 1);
+            addToInventory(item);
+            refreshArmoryUI();
+            bindArmoryCells();
+          } else if(item) showSimpleToast("Inventory full");
+        }
+      } else if(k === "q"){
+        // Q = move to dismantle (from inventory only)
+        e.preventDefault();
+        if(armorySelectedPanel === "inventory"){
+          const item = inventory[armorySelectedIndex];
+          if(item){
+            if(dismantleQueue.length < DISMANTLE_MAX_SLOTS){
+              removeFromInventory(armorySelectedIndex);
+              dismantleQueue.push(item);
+              refreshArmoryUI();
+              bindArmoryCells();
+            } else showSimpleToast("Dismantle queue full");
+          }
+        }
+      }
+    };
+    
+    document.addEventListener("keydown", armoryKeyHandler);
+  }
+
   function showSimpleToast(message){
     const div=document.createElement("div");
     div.className="toastItem";
@@ -1490,35 +2616,49 @@
     }
     return "Base: —";
   }
-  function renderCompareCard(item, slotKey, header, statDiffs, isSelected){
+  function renderCompareCard(item, slotKey, header, statDiffs, isCurrentItem){
     const wrap=document.createElement("div");
-    wrap.className="compareCard" + (isSelected ? " compareSelected" : " compareBlur");
+    wrap.className="compareCard" + (isCurrentItem ? " compareSelected" : " compareBlur");
     const it=item||previewItem(slotKey);
     const c=item ? RAR[it.rarity].color : "rgba(255,255,255,.55)";
     const rarTxt=item ? rarityLabel(it.rarity) : "—";
     const baseLine = baseLineFor(it);
+
+    // For current item: show affixes in gray. For new item: show affixes normally.
     const affHTML = it.affixes?.length
-      ? it.affixes.map(a=>`<span class="pill">${a.icon} ${a.text}</span>`).join("")
+      ? it.affixes.map(a=>`<span class="pill" ${isCurrentItem ? 'style="opacity:.6;"' : ''}>${a.icon} ${a.text}</span>`).join("")
       : `<span class="pill" style="opacity:.6;">No affixes</span>`;
 
     let diffHTML = "";
-    if(statDiffs && statDiffs.length){
+    if (isCurrentItem) {
+      // Show affix stats in neutral gray (already shown above), just add a label
+      diffHTML = `<div class="cmpDiffs"><div class="cmpDiffLine" style="color:var(--muted);">Currently equipped</div></div>`;
+    } else if(statDiffs && statDiffs.length){
+      // Show green/red diffs for the new item
       diffHTML = '<div class="cmpDiffs">' + statDiffs.map(d=>{
         const cls = d.good ? "cmpDiffGood" : "cmpDiffBad";
         return `<div class="cmpDiffLine ${cls}">${d.label} ${d.fmt}</div>`;
       }).join("") + "</div>";
+    } else {
+      diffHTML = `<div class="cmpDiffs"><div class="cmpDiffLine" style="color:var(--muted);">No stat change</div></div>`;
     }
+
+    // For current item: mute the colors to gray
+    const nameColor = isCurrentItem ? "var(--muted)" : c;
+    const iconStyle = isCurrentItem
+      ? `border-color:rgba(255,255,255,.25); box-shadow: none; opacity:.7;`
+      : `border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 34px ${c}35;`;
 
     wrap.innerHTML=`
       <div class="cmpTop">
         <div class="cmpName">${header}</div>
-        <div class="cmpRar" style="color:${c}; border-color:${c}66;">${rarTxt}</div>
+        <div class="cmpRar" style="color:${isCurrentItem ? 'var(--muted)' : c}; border-color:${isCurrentItem ? 'rgba(255,255,255,.25)' : c+'66'};">${rarTxt}</div>
       </div>
       <div class="cmpMain">
-        <div class="cmpIcon" style="border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 34px ${c}35;">${it.icon}</div>
+        <div class="cmpIcon" style="${iconStyle}">${it.icon}</div>
         <div class="cmpText">
-          <div style="font-weight:1000; color:${c}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.name}</div>
-          <div class="cmpLine">${it.type.toUpperCase()} • ${baseLine}</div>
+          <div style="font-weight:1000; color:${nameColor}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.name}</div>
+          <div class="cmpLine" ${isCurrentItem ? 'style="color:var(--muted);"' : ''}>${it.type.toUpperCase()} • ${baseLine}</div>
           <div class="pillRow">${affHTML}</div>
           ${diffHTML}
         </div>
@@ -1712,6 +2852,7 @@
         runLootByRarity[it.rarity] = (runLootByRarity[it.rarity] || 0) + 1;
       }
       equipped[pendingLoot.slotKey] = it;
+      saveEquipped();
       if (!fromInv) {
         showToast(it);
         if (it.rarity === "legendary") { spawnLegendaryBurst(player.x, player.y, false); powerUpLegendary(); }
@@ -1743,15 +2884,20 @@
     inCompare=false;
     compareLeftCardRef=null;
     compareRightCardRef=null;
-    overlay.classList.add("hidden");
     if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    paused=false;
-    if(runMusic && musicVol>0){ applyMusicVolume(); runMusic.play().catch(()=>{}); }
-    if (fromInv) {
-      if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
-    }
-
     endCompareInputGate();
+
+    if (fromInv) {
+      // Came from inventory - restore inventory overlay
+      if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
+      overlay.classList.add("hidden");
+      // Keep paused state as it was (inventory keeps game paused if running)
+    } else {
+      // Came from loot drop during game - hide overlay and resume
+      overlay.classList.add("hidden");
+      paused = false;
+      if(runMusic && musicVol>0){ applyMusicVolume(); runMusic.play().catch(()=>{}); }
+    }
   }
 
   function cancelCompare(){
@@ -1775,12 +2921,17 @@
     inCompare = false;
     compareLeftCardRef = null;
     compareRightCardRef = null;
-    overlay.classList.add("hidden");
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     endCompareInputGate();
+
     if (fromInv) {
+      // Came from inventory - restore inventory overlay
       if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
+      overlay.classList.add("hidden");
+      // Keep paused state as it was
     } else {
+      // Came from loot drop during game - hide overlay and resume
+      overlay.classList.add("hidden");
       paused = false;
       if (runMusic && musicVol > 0) { applyMusicVolume(); runMusic.play().catch(()=>{}); }
     }
@@ -1800,8 +2951,15 @@
     } else {
       const tooltipEl = document.getElementById("inventoryTooltip");
       if (tooltipEl) tooltipEl.classList.add("hidden");
-      if (running) paused = false;
-      if (runMusic && musicVol > 0) { applyMusicVolume(); runMusic.play().catch(()=>{}); }
+      if (running) {
+        paused = false;
+        if (runMusic && musicVol > 0) { applyMusicVolume(); runMusic.play().catch(()=>{}); }
+      } else {
+        // When closing inventory from base, restore the main menu overlay
+        if (overlay && overlay.classList.contains("hidden")) {
+          showMainMenu();
+        }
+      }
     }
   }
   function openInventory(){ if (!inventoryOpen) toggleInventory(); }
@@ -1817,34 +2975,54 @@
     return accept.length === 0 || accept.includes(item.type);
   }
 
-  function buildInventoryItemTooltipContent(item, slotKey){
-    const eqEmpty = { ...equipped };
-    eqEmpty[slotKey] = null;
-    const eqWith = { ...equipped };
-    eqWith[slotKey] = item;
-    const sEmpty = computeStats(eqEmpty);
-    const sWith = computeStats(eqWith);
-    const diffs = getStatDiffs(sEmpty, sWith);
+  function buildInventoryItemTooltipContent(item, slotKey, isEquipped = false){
     const c = RAR[item.rarity]?.color || "#9AA3AE";
     const baseLine = baseLineFor(item);
+
+    // For equipped items: show in neutral gray. For non-equipped: normal colors.
     const affHTML = item.affixes?.length
-      ? item.affixes.map(a => `<span class="pill">${a.icon} ${a.text}</span>`).join("")
+      ? item.affixes.map(a => `<span class="pill" ${isEquipped ? 'style="opacity:.6;"' : ''}>${a.icon} ${a.text}</span>`).join("")
       : `<span class="pill" style="opacity:.6;">No affixes</span>`;
-    const diffHTML = diffs.length
-      ? "<div class=\"cmpDiffs\">" + diffs.map(d => {
+
+    let diffHTML = "";
+    if (isEquipped) {
+      // Equipped item: show neutral gray label
+      diffHTML = `<div class="cmpDiffs"><div class="cmpDiffLine" style="color:var(--muted);">Currently equipped</div></div>`;
+    } else {
+      // Not equipped: show green/red diffs vs current stats
+      const sCurrent = computeStats(equipped);
+      const eqWith = { ...equipped };
+      eqWith[slotKey] = item;
+      const sWith = computeStats(eqWith);
+      const diffs = getStatDiffs(sCurrent, sWith);
+      if (diffs.length) {
+        diffHTML = "<div class=\"cmpDiffs\">" + diffs.map(d => {
           const cls = d.goodB ? "cmpDiffGood" : "cmpDiffBad";
           return `<div class="cmpDiffLine ${cls}">${d.label} ${d.fmtB}</div>`;
-        }).join("") + "</div>"
-      : "";
+        }).join("") + "</div>";
+      } else {
+        diffHTML = `<div class="cmpDiffs"><div class="cmpDiffLine" style="color:var(--muted);">No stat change</div></div>`;
+      }
+    }
+
+    // For equipped items: mute colors to gray
+    const nameColor = isEquipped ? "var(--muted)" : c;
+    const iconStyle = isEquipped
+      ? `border-color:rgba(255,255,255,.25); box-shadow: none; opacity:.7;`
+      : `border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 34px ${c}35;`;
+    const rarStyle = isEquipped
+      ? `color:var(--muted); border-color:rgba(255,255,255,.25);`
+      : `color:${c}; border-color:${c}66;`;
+
     return `
       <div class="cmpTop">
-        <div class="cmpName">${item.name}</div>
-        <div class="cmpRar" style="color:${c}; border-color:${c}66;">${rarityLabel(item.rarity)}</div>
+        <div class="cmpName" ${isEquipped ? 'style="color:var(--muted);"' : ''}>${item.name}</div>
+        <div class="cmpRar" style="${rarStyle}">${rarityLabel(item.rarity)}</div>
       </div>
       <div class="cmpMain">
-        <div class="cmpIcon" style="border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 34px ${c}35;">${item.icon}</div>
+        <div class="cmpIcon" style="${iconStyle}">${item.icon}</div>
         <div class="cmpText">
-          <div class="cmpLine">${item.type.toUpperCase()} • ${baseLine}</div>
+          <div class="cmpLine" ${isEquipped ? 'style="color:var(--muted);"' : ''}>${item.type.toUpperCase()} • ${baseLine}</div>
           <div class="pillRow">${affHTML}</div>
           ${diffHTML}
         </div>
@@ -1859,7 +3037,19 @@
       const dps = estimateDPS(s);
       let rows = STAT_KEYS.map(m => `<div class="invStatRow"><span class="invStatLabel">${m.icon} ${m.label}</span><span class="invStatVal">${m.fmt(s[m.k])}</span></div>`).join("");
       rows += `<div class="invStatRow invStatRowDps"><span class="invStatLabel">⚔️ DPS</span><span class="invStatVal">${Math.round(dps)}</span></div>`;
-      statsPanel.innerHTML = `<div class="invStatTitle">Current stats</div><div class="invStatList">${rows}</div>`;
+      let scrapHtml = "";
+      const hasRunScrap = Object.values(runScrap).some(v => v > 0);
+      if (hasRunScrap) {
+        scrapHtml = `<div class="invStatTitle" style="margin-top:14px;">Run scrap</div><div class="invStatList">`;
+        for (const rar of ["common","uncommon","rare","legendary","set"]) {
+          if (runScrap[rar] > 0) {
+            const col = RAR[rar]?.color || "#9AA3AE";
+            scrapHtml += `<div class="invStatRow"><span class="invStatLabel" style="color:${col};">${RAR[rar]?.name||rar}</span><span class="invStatVal">${runScrap[rar]}</span></div>`;
+          }
+        }
+        scrapHtml += `</div>`;
+      }
+      statsPanel.innerHTML = `<div class="invStatTitle">Current stats</div><div class="invStatList">${rows}</div>${scrapHtml}`;
     }
     if (!inventoryFigureEl || !inventoryGridEl) return;
     const slotKeys = ["head", "jewel", "armor", "weapon", "ring1", "ring2", "feet"];
@@ -1923,12 +3113,14 @@
           removeFromInventory(sourceIndex);
           if (existing) addToInventory(existing);
         }
+        saveEquipped();
       } else {
         if (sourceType === "equipment") {
           const sk = ["head","jewel","armor","weapon","ring1","ring2","feet"][sourceIndex];
           if (inventory.length >= getInventoryMaxSlots()) { clearDragState(); return; }
           equipped[sk] = null;
           addToInventory(item);
+          saveEquipped();
         } else {
           const existing = inventory[targetIndex] || null;
           if (sourceIndex === targetIndex) { clearDragState(); return; }
@@ -1946,9 +3138,9 @@
 
     const tooltipEl = document.getElementById("inventoryTooltip");
     const appEl = document.getElementById("app");
-    function showItemTooltip(el, item, slotKey) {
+    function showItemTooltip(el, item, slotKey, isEquipped = false) {
       if (!tooltipEl || !item) return;
-      tooltipEl.innerHTML = buildInventoryItemTooltipContent(item, slotKey);
+      tooltipEl.innerHTML = buildInventoryItemTooltipContent(item, slotKey, isEquipped);
       tooltipEl.classList.remove("hidden");
       const rect = el.getBoundingClientRect();
       const gap = 10;
@@ -1983,7 +3175,7 @@
       el.ondragleave = () => el.classList.remove("invDropTarget");
       el.ondrop = (e) => { e.preventDefault(); el.classList.remove("invDropTarget"); onDrop(slotKey, null); };
       if (it) {
-        el.onmouseenter = () => showItemTooltip(el, it, slotKey);
+        el.onmouseenter = () => showItemTooltip(el, it, slotKey, true);
         el.onmouseleave = () => hideItemTooltip();
       } else {
         el.onmouseenter = null;
@@ -2232,18 +3424,22 @@
       finalSp *= 0.9;
     }
 
+    const biome = (currentLevelConfig && currentLevelConfig.biome) || 1;
+    const isRanged = biome >= 2 && !isElite && Math.random() < 0.38;
     enemies.push({
-      kind: "skitteringMouse",
+      kind: isRanged ? "ranged" : "skitteringMouse",
       x,y, r: baseR*PX,
       hp: finalHp,
       maxHP: finalHp,
       sp: finalSp,
       elite: isElite,
       boss: false,
-      icon: "🐭",
+      icon: isRanged ? "🔫" : "🐭",
       contactDmg,
       hitFlash:0,
-      animOffset: Math.random()*10
+      animOffset: Math.random()*10,
+      ranged: isRanged,
+      shootCD: 0
     });
   }
 
@@ -2444,8 +3640,23 @@
     const isLevel11 = level11Active && currentLevelConfig && currentLevelConfig.id === "1-1";
     enemies.splice(enemies.indexOf(e),1);
     kills++;
+    
+    // Track achievements and bestiary
+    updateAchievement("kills_10", 1);
+    updateAchievement("kills_100", 1);
+    updateAchievement("kills_500", 1);
+    
+    // Unlock bestiary entries based on enemy type
+    if(!e.boss && !e.elite && !e.miniboss){
+      unlockIntel("bestiary", "basic_enemy");
+    }
+    if(e.elite && !e.boss && !e.miniboss){
+      unlockIntel("bestiary", "elite_enemy");
+      updateAchievement("elite_10", 1);
+    }
     if(e.miniboss){
       minibossKills++;
+      unlockIntel("bestiary", "miniboss_enemy");
       if(isLevel11){
         showSimpleToast("Seal the Manhole");
         const zone = level11Zones.find(z => z.id === e.clusterZone);
@@ -2455,7 +3666,13 @@
         }
       }
     }
-    if(e.boss && !e.miniboss) bossKills++;
+    if(e.boss && !e.miniboss){
+      bossKills++;
+      unlockIntel("bestiary", "boss_sewer");
+      unlockIntel("orders", "first_boss_kill");
+      updateAchievement("boss_1", 1);
+      updateAchievement("boss_5", 1);
+    }
     streak++; streakT=1.8;
 
     dropXP(e.x,e.y, e.elite, e.boss);
@@ -2710,6 +3927,15 @@
 
   function showMainMenu(){
     running=false; paused=false; inCompare=false;
+    if(armoryKeyHandler){ document.removeEventListener("keydown", armoryKeyHandler); armoryKeyHandler = null; }
+    // Return any items in dismantle queue back to inventory/stash
+    if(dismantleQueue.length > 0){
+      for(const item of dismantleQueue){
+        if(inventory.length < getInventoryMaxSlots()) addToInventory(item);
+        else if(stash.length < STASH_MAX_SLOTS) addToStash(item);
+      }
+      dismantleQueue = [];
+    }
     if(runMusic){ runMusic.pause(); runMusic=null; }
     overlay.classList.remove("hidden");
     const overlayCard = document.getElementById("overlayCard");
@@ -2770,8 +3996,8 @@
     const clickHandlers = {
       contracts: () => showContractsMenu(),
       chem: () => showChemistryLab(),
-      armory: () => showComingSoonPopup(),
-      intel: () => showComingSoonPopup(),
+      armory: () => showArmory(),
+      intel: () => showLoreMenu(),
       core: () => showCoreSystemsMenu(),
       options: () => showComingSoonPopup(),
       drop: () => { ensureAudio(); showChooseLevelMenu(); }
@@ -2913,12 +4139,18 @@
     ovBody.appendChild(btnWrap);
   }
 
+  const BLOOD_TRAITS = [
+    { id: "speed", label: "Speed", bloodId: "red", desc: "+% move speed" },
+    { id: "dmg", label: "Damage", bloodId: "blue", desc: "+% damage" },
+    { id: "toxic", label: "Toxic", bloodId: "green", desc: "+% thorns" },
+    { id: "speedAndDmg", label: "Elixir", bloodId: "purple", desc: "+% speed & damage" }
+  ];
   function showChemistryLab(){
     const overlayCard = document.getElementById("overlayCard");
     if(overlayCard) overlayCard.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="Chemistry Lab";
-    ovSub.textContent="Stored blood from extractions. Exchange blood for tokens.";
+    ovSub.textContent="Research blood traits. Craft potions for your next run. Exchange blood for tokens.";
     ovBtns.innerHTML="";
     const bloodTypes = (typeof window.BLOOD_TYPES !== "undefined" && window.BLOOD_TYPES.length) ? window.BLOOD_TYPES : [{ id: "red", name: "Red", color: "#c0392b" }];
     let totalMl = 0;
@@ -2926,7 +4158,7 @@
     const canExchange = Math.floor(totalMl / BLOOD_EXCHANGE_ML_PER_TOKEN);
     const wrap = document.createElement("div");
     wrap.className = "chemLabWrap";
-    wrap.style.cssText = "display:flex; flex-direction:column; gap:14px; max-width:420px;";
+    wrap.style.cssText = "display:flex; flex-direction:column; gap:14px; max-width:480px;";
     const tubeList = document.createElement("div");
     tubeList.className = "chemLabTubes";
     tubeList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
@@ -2939,9 +4171,78 @@
     }
     wrap.appendChild(tubeList);
     const totalRow = document.createElement("div");
-    totalRow.style.cssText = "font-weight:900; padding:10px 0; border-top:1px solid rgba(255,255,255,.2);";
+    totalRow.style.cssText = "font-weight:900; padding:4px 0; border-top:1px solid rgba(255,255,255,.2);";
     totalRow.textContent = `Total: ${totalMl} ml`;
     wrap.appendChild(totalRow);
+
+    const researchTitle = document.createElement("div");
+    researchTitle.style.cssText = "font-weight:900; font-size:13px; margin-top:8px;";
+    researchTitle.textContent = "Research (unlock traits)";
+    wrap.appendChild(researchTitle);
+    for(const tr of BLOOD_TRAITS){
+      const cost = BLOOD_RESEARCH_ML[tr.bloodId] || 200;
+      const have = baseBloodMl[tr.bloodId]|0;
+      const unlocked = bloodResearch[tr.id];
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex; align-items:center; gap:10px; flex-wrap:wrap;";
+      if(unlocked){
+        row.innerHTML = `<span style="color:var(--xp);">✓ ${tr.label}</span><span style="font-size:11px; color:var(--muted);">${tr.desc}</span>`;
+      } else {
+        const btn = document.createElement("button");
+        btn.className = "menuBtnPrimary";
+        btn.style.cssText = "font-size:12px; padding:8px 12px;";
+        btn.textContent = `Research ${tr.label} — ${cost} ml`;
+        btn.disabled = have < cost;
+        btn.onclick = () => {
+          if((baseBloodMl[tr.bloodId]|0) < cost) return;
+          baseBloodMl[tr.bloodId] = (baseBloodMl[tr.bloodId]|0) - cost;
+          bloodResearch[tr.id] = true;
+          saveBloodResearch();
+          localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
+          beep({freq:660,dur:0.1,type:"sine",gain:0.12});
+          showChemistryLab();
+        };
+        row.appendChild(btn);
+      }
+      wrap.appendChild(row);
+    }
+
+    const craftTitle = document.createElement("div");
+    craftTitle.style.cssText = "font-weight:900; font-size:13px; margin-top:12px;";
+    craftTitle.textContent = "Craft potion (for next run)";
+    wrap.appendChild(craftTitle);
+    for(const tr of BLOOD_TRAITS){
+      if(!bloodResearch[tr.id]) continue;
+      const cost = BLOOD_POTION_ML[tr.id] || 150;
+      const have = baseBloodMl[tr.bloodId]|0;
+      const btn = document.createElement("button");
+      btn.className = "menuBtnPrimary";
+      btn.style.cssText = "font-size:12px; padding:8px 12px;";
+      btn.textContent = `Craft ${tr.label} — ${cost} ml`;
+      btn.disabled = have < cost;
+      btn.onclick = () => {
+        if((baseBloodMl[tr.bloodId]|0) < cost) return;
+        baseBloodMl[tr.bloodId] = (baseBloodMl[tr.bloodId]|0) - cost;
+        potionQueue.push(tr.id);
+        savePotionQueue();
+        localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
+        // Track chemist achievements
+        updateAchievement("chemist_1", 1);
+        updateAchievement("chemist_10", 1);
+        beep({freq:523,dur:0.08,type:"sine",gain:0.1});
+        showChemistryLab();
+      };
+      wrap.appendChild(btn);
+    }
+    if(potionQueue.length){
+      const nextRun = document.createElement("div");
+      nextRun.style.cssText = "font-size:12px; color:var(--xp); margin-top:8px;";
+      const counts = {};
+      for(const p of potionQueue) counts[p] = (counts[p]||0) + 1;
+      nextRun.textContent = "Next run: " + Object.entries(counts).map(([k,v]) => BLOOD_TRAITS.find(t=>t.id===k)?.label + " x" + v).join(", ");
+      wrap.appendChild(nextRun);
+    }
+
     const exchangeBtn = document.createElement("button");
     exchangeBtn.className = "menuBtnPrimary";
     exchangeBtn.textContent = canExchange > 0 ? `Exchange ${canExchange * BLOOD_EXCHANGE_ML_PER_TOKEN} ml → ${canExchange} token${canExchange !== 1 ? "s" : ""}` : "No blood to exchange (50 ml = 1 token)";
@@ -3733,7 +5034,7 @@
 
   // ========= Reset / Start =========
   function resetState(keepEquipped){
-    enemies=[]; bullets=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
+    enemies=[]; bullets=[]; enemyProjectiles=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
     kills=0; lootCount=0; streak=0; streakT=0;
     threat=1.0; spawnAcc=0; atkCD=0;
     lootPickupCooldown=0;
@@ -3761,6 +5062,7 @@
     runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
     bloodPools = [];
     runBloodMl = {};
+    runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
     gatheringPool = null;
     gatheringAccumulatedMs = 0;
 
@@ -4026,6 +5328,20 @@
     stopMenuMusic();
     if(runMusic){ runMusic.pause(); runMusic=null; }
     resetState(true);
+    player.potionSpeedPct = 0;
+    player.potionDmgPct = 0;
+    player.potionToxicPct = 0;
+    player.potionSpeedAndDmgPct = 0;
+    for(const p of potionQueue){
+      if(p === "speed") player.potionSpeedPct = (player.potionSpeedPct || 0) + (POTION_EFFECT_PCT.speed || 12);
+      else if(p === "dmg") player.potionDmgPct = (player.potionDmgPct || 0) + (POTION_EFFECT_PCT.dmg || 15);
+      else if(p === "toxic") player.potionToxicPct = (player.potionToxicPct || 0) + (POTION_EFFECT_PCT.toxic || 10);
+      else if(p === "speedAndDmg"){ player.potionSpeedAndDmgPct = (player.potionSpeedAndDmgPct || 0) + (POTION_EFFECT_PCT.speedAndDmg || 8); }
+    }
+    if(potionQueue.length){
+      potionQueue = [];
+      savePotionQueue();
+    }
     if(DEV_GIVE_LEGENDARY_WEAPON){
       equipped.weapon = makeItem("weapon", "legendary");
     }
@@ -4259,16 +5575,7 @@
     for(const zone of level11Zones){
       if(!zone.activated || zone.closed) continue;
 
-      // Zone must be cleared of its own enemies before welding
-      let hasZoneEnemies = false;
-      for(const e of enemies){
-        if(!e) continue;
-        if(e.clusterZone === zone.id){
-          hasZoneEnemies = true;
-          break;
-        }
-      }
-      if(hasZoneEnemies) continue;
+      // Welding is now allowed at any time once zone is activated (no need to clear enemies first)
 
       const m = manholes[zone.manholeIndex];
       if(!m) continue;
@@ -4565,6 +5872,35 @@
         updateQuestAfterSuccessfulRun(savedSummary, elapsed);
         for(const id in runBloodMl){ baseBloodMl[id] = (baseBloodMl[id]||0) + runBloodMl[id]; }
         if(Object.keys(runBloodMl).length) localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl));
+        for(const rar in runScrap){ baseScrap[rar] = (baseScrap[rar]||0) + (runScrap[rar]||0); }
+        saveBaseScrap();
+        
+        // Track achievements and intel for successful extraction
+        updateAchievement("first_mission", 1, true);
+        updateAchievement("first_extraction", 1, true);
+        unlockIntel("orders", "first_extraction");
+        // Check for speed run achievement
+        if(elapsed <= 60) updateAchievement("speedrun_60", 1, true);
+        // Check for no damage achievement (if player at full HP or shield absorbed all)
+        if(player.hp >= player.maxHp) updateAchievement("no_damage", 1, true);
+        // Track blood collection
+        const totalBlood = Object.values(savedSummary.bloodMlByType || {}).reduce((a,b)=>a+b, 0);
+        updateAchievement("collector_100", totalBlood);
+        updateAchievement("collector_1000", totalBlood);
+        
+        // Unlock next level after successful extraction (boss must have been killed)
+        if(bossKilled && currentLevelConfig){
+          const idx = LEVELS.findIndex(l => l.id === currentLevelConfig.id);
+          if(idx >= 0 && idx < LEVELS.length - 1){
+            const nextId = LEVELS[idx + 1].id;
+            if(!unlockedLevels.includes(nextId)){
+              unlockedLevels.push(nextId);
+              localStorage.setItem("affixloot_unlocked_levels", JSON.stringify(unlockedLevels));
+              showSimpleToast(`New zone unlocked: ${nextId}`);
+            }
+          }
+        }
+        
         extractionTransition = null;
         extractionSummaryData = null;
         running = false;
@@ -4610,6 +5946,7 @@
       }
       if(deathSequence.t >= deathSequence.duration){
         equipped = { weapon: null, head: null, armor: null, feet: null, ring1: null, ring2: null, jewel: null };
+        saveEquipped();
         deathSequence = null;
         gameOver();
       }
@@ -4849,6 +6186,24 @@
       e.x = eOut.x; e.y = eOut.y;
       if(e.hitFlash>0) e.hitFlash-=dt;
 
+      // Ranged enemies (biome 2+): shoot at player when in range
+      if(e.ranged && e.shootCD != null){
+        e.shootCD -= dt;
+        const d0 = Math.hypot(player.x - e.x, player.y - e.y) || 1;
+        const inRange = d0 >= 120 * PX && d0 <= 340 * PX;
+        if(e.shootCD <= 0 && inRange){
+          const ux = (player.x - e.x) / d0, uy = (player.y - e.y) / d0;
+          const projSp = 140 * PX;
+          const projDmg = e.contactDmg != null ? Math.round(e.contactDmg * 0.7) : 6;
+          enemyProjectiles.push({
+            x: e.x + ux * (e.r + 4*PX), y: e.y + uy * (e.r + 4*PX),
+            vx: ux * projSp, vy: uy * projSp,
+            r: 5 * PX, dmg: projDmg, life: 2.2
+          });
+          e.shootCD = 1.1;
+        }
+      }
+
       // Player contact damage + separation: enemies stay at least MIN_GAP from player center (can touch and deal damage, but not overlap sprite)
       const minGap = 22 * PX;
       const rr = (player.r + e.r + minGap);
@@ -4868,6 +6223,21 @@
           e.x -= nx * push;
           e.y -= ny * push;
         }
+      }
+    }
+
+    // Enemy projectiles (biome 2+ ranged enemies)
+    for(let i = enemyProjectiles.length - 1; i >= 0; i--){
+      const p = enemyProjectiles[i];
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.life -= dt;
+      if(p.life <= 0 || p.x < -50 || p.x > mapW + 50 || p.y < -50 || p.y > mapH + 50){
+        enemyProjectiles.splice(i, 1); continue;
+      }
+      const pd2 = (player.x - p.x)**2 + (player.y - p.y)**2;
+      if(pd2 < (player.r + p.r)**2){
+        takeDamage(p.dmg);
+        enemyProjectiles.splice(i, 1);
       }
     }
 
@@ -4998,6 +6368,13 @@
         showSimpleToast("Blood sample secured +" + pool.ml + " ml");
         beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
         setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
+        
+        // Unlock intel based on blood type discovery
+        const btId = pool.bloodTypeId;
+        if(btId === "red") unlockIntel("orders", "blood_red_analysis");
+        else if(btId === "green") unlockIntel("orders", "blood_green_discovery");
+        else if(btId === "blue") unlockIntel("orders", "blood_blue_discovery");
+        else if(btId === "purple") unlockIntel("orders", "blood_purple_discovery");
       }
     }
 
@@ -5673,6 +7050,7 @@
       for(const p of bloodPools) drawBloodPool(p);
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
+      for(const p of enemyProjectiles) drawEnemyProjectile(p);
       for(const e of enemies) drawEnemy(e);
       for(const p of particles) drawParticle(p);
       if(extractionFlameRing){
@@ -5736,6 +7114,7 @@
       for(const p of bloodPools) drawBloodPool(p);
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
+      for(const p of enemyProjectiles) drawEnemyProjectile(p);
       for(const e of enemies) drawEnemy(e);
       for(const p of particles) drawParticle(p);
       for(const ring of levelUpRings) drawLevelUpRing(ring);
@@ -6114,6 +7493,19 @@
     ctx.beginPath();
     ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  function drawEnemyProjectile(p){
+    const col = "rgba(255,80,80,0.92)";
+    ctx.save();
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,120,120,0.6)";
+    ctx.lineWidth = 1.5 * PX;
+    ctx.stroke();
     ctx.restore();
   }
 
