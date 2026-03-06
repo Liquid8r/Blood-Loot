@@ -10,6 +10,7 @@
       --uncommon:#4EA6FF;
       --rare:#FFD24D;
       --legendary:#FF8A2A;
+      --set:#3DD077;
 
       --hp:#FF4D6D;
       --xp:#7CFFB2;
@@ -1110,3 +1111,198 @@
       pointer-events:none;
       box-shadow: 0 14px 40px rgba(0,0,0,.40);
     }
+
+    /* Inventory overlay (I key): stats panel (left) + cat figure + backpack grid */
+    .inventoryOverlay{
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,.55);
+      pointer-events: auto;
+    }
+    .inventoryOverlay.hidden{ display: none !important; pointer-events: none; }
+    .inventoryOverlayRow{
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      gap: 16px;
+      max-width: 1298px;   /* 1180 * 1.1 = 10% wider */
+      width: calc(100% - 24px);
+    }
+    /* All three boxes: same height (~20% higher than before). Character panel 20% wider; others keep width. */
+    .inventoryCharacterPanel{
+      width: 290px;        /* ~20% wider than 242 */
+      min-width: 260px;
+      height: 470px;      /* 392 * 1.2 — exact same height as the other two */
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
+      backdrop-filter: blur(14px);
+      padding: 16px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .inventoryStatsPanel{
+      width: 242px;
+      min-width: 220px;
+      height: 470px;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
+      backdrop-filter: blur(14px);
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .inventoryCharacterTitle{
+      font-size: 14px;
+      font-weight: 1000;
+      letter-spacing: .5px;
+      color: var(--text);
+    }
+    .inventoryStatsPanel .invStatTitle{
+      font-size: 14px;
+      font-weight: 1000;
+      margin-bottom: 12px;
+      letter-spacing: .5px;
+      color: var(--text);
+    }
+    .inventoryStatsPanel .invStatList{ display: flex; flex-direction: column; gap: 6px; }
+    .inventoryStatsPanel .invStatRow{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+    }
+    .inventoryStatsPanel .invStatLabel{ color: var(--muted); }
+    .inventoryStatsPanel .invStatVal{ font-family: ui-monospace, monospace; color: var(--text); }
+    .inventoryStatsPanel .invStatRowDps{ margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--stroke); }
+    .inventoryPanel{
+      flex: 1;
+      min-width: 0;
+      height: 470px;       /* same as character and stats */
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
+      backdrop-filter: blur(14px);
+      padding: 20px;
+    }
+    .inventoryHeader{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .inventoryTitle{ font-size: 18px; font-weight: 1000; margin: 0; letter-spacing: .5px; }
+    .inventoryHint{ font-size: 11px; color: var(--muted); }
+    .inventoryContent{
+      display: flex;
+      gap: 32px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .inventoryFigureWrap{ flex-shrink: 0; max-width: 100%; overflow: hidden; }
+    .inventoryFigure{
+      width: 220px;
+      height: 280px;
+      position: relative;
+      max-width: 100%;
+      background: radial-gradient(ellipse 70% 50% at 50% 45%, rgba(60,70,100,.35), rgba(30,35,55,.5));
+      border: 2px solid rgba(255,255,255,.14);
+      border-radius: 50% 50% 45% 45%;
+      box-shadow: inset 0 0 40px rgba(0,0,0,.25);
+    }
+    .inventoryFigure::before{
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 18%;
+      transform: translateX(-50%);
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: rgba(80,90,120,.4);
+      border: 2px solid rgba(255,255,255,.12);
+    }
+    .invSlot{
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      border: 2px dashed rgba(255,255,255,.25);
+      background: rgba(0,0,0,.25);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .invSlot:hover{ border-color: rgba(255,255,255,.45); background: rgba(0,0,0,.35); }
+    .invSlot.invDropTarget{ border-color: var(--xp); background: rgba(124,255,178,.15); }
+    .invSlotEquipment{ border-style: solid; }
+    .invSlotIcon{ font-size: 22px; line-height: 1; }
+    .invSlotLabel{ font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .invSlotHead{ left: 50%; top: 8px; transform: translateX(-50%); }
+    .invSlotNeck{ left: 50%; top: 58px; transform: translateX(-50%); }
+    .invSlotArmor{ left: 50%; top: 50%; transform: translate(-50%, -50%); }
+    .invSlotWeapon{ right: -8px; top: 52%; transform: translateY(-50%); }
+    .invSlotRing1{ left: -8px; top: 48%; transform: translateY(-50%); }
+    .invSlotRing2{ right: -8px; top: 68%; transform: translateY(-50%); }
+    .invSlotFeet{ left: 50%; bottom: 12px; transform: translateX(-50%); }
+    .inventoryGridWrap{ flex: 1; min-width: 260px; }
+    .inventoryGridLabel{ font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+    .inventoryGrid{
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .invGridCell{
+      aspect-ratio: 1;
+      border-radius: 10px;
+      border: 2px dashed rgba(255,255,255,.2);
+      background: rgba(0,0,0,.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .invGridCell:hover{ border-color: rgba(255,255,255,.35); background: rgba(0,0,0,.3); }
+    .invGridCell.invDropTarget{ border-color: var(--xp); background: rgba(124,255,178,.12); }
+    .invGridCell .invSlotIcon{ font-size: 20px; }
+    body.invDragging * { cursor: grabbing; }
+
+    .inventoryItemTooltip{
+      position: fixed;
+      z-index: 25;
+      pointer-events: none;
+      max-width: 320px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--stroke);
+      background: #000;
+      box-shadow: 0 16px 48px rgba(0,0,0,.5);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .inventoryItemTooltip.hidden{ display: none !important; }
+    .inventoryItemTooltip .cmpTop,
+    .inventoryItemTooltip .cmpMain,
+    .inventoryItemTooltip .cmpText,
+    .inventoryItemTooltip .cmpDiffs,
+    .inventoryItemTooltip .cmpDiffLine,
+    .inventoryItemTooltip .pillRow{ margin-top: 6px; }
+    .inventoryItemTooltip .cmpDiffGood{ color: var(--good); }
+    .inventoryItemTooltip .cmpDiffBad{ color: var(--bad); }

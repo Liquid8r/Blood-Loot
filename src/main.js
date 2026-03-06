@@ -76,6 +76,11 @@
   const atkWrap = document.getElementById("atkWrap");
   const hudQuestStatus = document.getElementById("hudQuestStatus");
 
+  let inventoryOpen = false;
+  const inventoryOverlayEl = document.getElementById("inventoryOverlay");
+  const inventoryFigureEl = document.getElementById("inventoryFigure");
+  const inventoryGridEl = document.getElementById("inventoryGrid");
+
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
   const GAME_VERSION = "1.004.2";
   const gameVersionEl = document.getElementById("gameVersion");
@@ -235,6 +240,7 @@
     uncommon: {name:"Uncommon",  color:cssVar("--uncommon"),  w:0.24},
     rare:     {name:"Rare",      color:cssVar("--rare"),      w:0.08},
     legendary:{name:"Legendary", color:cssVar("--legendary"), w:0.01},
+    set:      {name:"Set",       color:cssVar("--set"),       w:0},
   };
   function rarityLabel(r){ return RAR[r].name; }
 
@@ -429,8 +435,8 @@
         { id: "loot_left_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_0"], branch: "left", branchIndex: 1 },
         { id: "loot_left_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_1"], branch: "left", branchIndex: 2 },
         { id: "loot_left_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_2"], branch: "left", branchIndex: 3 },
-        { id: "loot_right_0", name: "", cost: 0, maxLevel: 1, requires: ["loot_base"], branch: "right", branchIndex: 0 },
-        { id: "loot_right_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_0"], branch: "right", branchIndex: 1 },
+        { id: "loot_inv_slots", name: "Pack Mule", cost: 2, maxLevel: 3, requires: ["loot_base"], branch: "right", branchIndex: 0 },
+        { id: "loot_right_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_inv_slots"], branch: "right", branchIndex: 1 },
         { id: "loot_right_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_1"], branch: "right", branchIndex: 2 },
         { id: "loot_right_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_2"], branch: "right", branchIndex: 3 },
         { id: "loot_top", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_3", "loot_right_3"], branch: "top", branchIndex: 0 }
@@ -469,6 +475,10 @@
       return;
     }
     if(["w","a","s","d","arrowup","arrowleft","arrowdown","arrowright"," "].includes(k) || e.key===" ") e.preventDefault();
+    if(inCompare && k==="escape"){ e.preventDefault(); cancelCompare(); return; }
+    if(inventoryOpen && k==="escape"){ e.preventDefault(); closeInventory(); return; }
+    if(level11ControlsWrap && k==="escape"){ e.preventDefault(); const btn = level11ControlsWrap.querySelector("#level11ControlsGotIt"); if(btn) btn.click(); return; }
+    if(overlay && !overlay.classList.contains("hidden") && k==="escape"){ e.preventDefault(); if(ovBody && !ovBody.querySelector(".menuHubWrap")){ showMainMenu(); } return; }
     if((k==="p" || k==="escape") && running){ togglePause(); return; }
     if(k==="x" && running && !paused && !inCompare && !victoryPhase && extractionCountdown==null && extractionLiftoff==null && player.hp>0){
       if(!bossKilled){
@@ -478,6 +488,10 @@
         extractionCountdown = EXTRACTION_COUNTDOWN_SEC;
         e.preventDefault();
       }
+    }
+    if(k==="i" && !inCompare){
+      e.preventDefault();
+      toggleInventory();
     }
     keys.add(k===" " ? "space" : k);
   },{passive:false});
@@ -490,6 +504,8 @@
   const TYPE_ICONS = {
     weapon: ["⚔️","🗡️","🏹","🔫","🔱","🪓"],
     armor:  ["🛡️","🪖","🦺","🥾","🧤"],
+    helmet: ["🪖","⛑️","👑","🎩"],
+    boots:  ["🥾","👢","🩴"],
     ring:   ["💍","🪬","🔱"],
     jewel:  ["💎","🔮","🧿","✨"],
   };
@@ -601,7 +617,48 @@
     levelBonuses:{},
   };
 
-  let equipped = {weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
+  let equipped = {weapon:null, head:null, armor:null, feet:null, ring1:null, ring2:null, jewel:null};
+
+  // Inventory: items we carry; 10 base slots + bonus from Looter tree
+  const INVENTORY_BASE_SLOTS = 10;
+  const INVENTORY_SLOTS_PER_LOOTER_LEVEL = 2;
+  const INVENTORY_STORAGE_KEY = "affixloot_inventory";
+  function getInventoryMaxSlots(){
+    const tree = SKILL_TREES.find(t => t.id === "looter");
+    const node = tree && tree.nodes.find(n => n.id === "loot_inv_slots");
+    const level = node ? Math.min(skillLevels["loot_inv_slots"] || 0, node.maxLevel || 1) : 0;
+    return INVENTORY_BASE_SLOTS + level * INVENTORY_SLOTS_PER_LOOTER_LEVEL;
+  }
+  let inventory = (function(){
+    try {
+      const raw = localStorage.getItem(INVENTORY_STORAGE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  })();
+  function saveInventory(){
+    try {
+      const max = getInventoryMaxSlots();
+      const trimmed = inventory.slice(0, max);
+      if (trimmed.length !== inventory.length) inventory = trimmed;
+      localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventory));
+    } catch (e) {}
+  }
+  function addToInventory(item){
+    if (!item) return false;
+    const max = getInventoryMaxSlots();
+    if (inventory.length >= max) return false;
+    inventory.push(item);
+    saveInventory();
+    return true;
+  }
+  function removeFromInventory(index){
+    if (index < 0 || index >= inventory.length) return null;
+    const item = inventory.splice(index, 1)[0];
+    saveInventory();
+    return item;
+  }
 
   let enemies=[], bullets=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
   const MAX_LOOT_DROPS = 30;   // cap for long runs; remove oldest when exceeded
@@ -896,7 +953,50 @@
   function getItemTier(it) {
     if (!it) return 1;
     if (it.tier != null && it.tier >= 1 && it.tier <= 4) return it.tier;
+    if (it.rarity === "set") return 4;
     return it.rarity === "common" ? 1 : it.rarity === "uncommon" ? 2 : it.rarity === "rare" ? 3 : 4;
+  }
+
+  const SET_DEFINITIONS = [
+    { id: "swift", name: "Swift", primary: "msPct", secondary: "asPct", pieces: { head: "Swift Coif", ring: "Swift Band", jewel: "Swift Pendant", feet: "Swift Greaves" } },
+    { id: "fury", name: "Fury", primary: "dmgPct", secondary: "critPct", pieces: { head: "Fury Crown", ring: "Fury Band", jewel: "Fury Pendant", feet: "Fury Treads" } },
+    { id: "scholar", name: "Scholar", primary: "xpGainPct", secondary: "pickup", pieces: { head: "Scholar's Cowl", ring: "Scholar's Ring", jewel: "Scholar's Pendant", feet: "Scholar's Steps" } },
+    { id: "vital", name: "Vital", primary: "hpFlat", secondary: "regenPct", pieces: { head: "Vital Helm", ring: "Vital Band", jewel: "Vital Amulet", feet: "Vital Boots" } },
+    { id: "marauder", name: "Marauder", primary: "asPct", secondary: "dmgPct", pieces: { head: "Marauder's Helm", ring: "Marauder's Loop", jewel: "Marauder's Charm", feet: "Marauder's Strides" } },
+    { id: "scavenger", name: "Scavenger", primary: "pickup", secondary: "shieldFlat", pieces: { head: "Scavenger Hood", ring: "Scavenger Ring", jewel: "Scavenger Locket", feet: "Scavenger Boots" } },
+    { id: "sanguine", name: "Sanguine", primary: "bloodPoolChancePct", secondary: "hpFlat", pieces: { head: "Sanguine Circlet", ring: "Sanguine Band", jewel: "Sanguine Amulet", feet: "Sanguine Greaves" } },
+    { id: "vanity", name: "Vanity", primary: "critPct", secondary: "lifesteal", pieces: { head: "Vanity Crown", ring: "Vanity Ring", jewel: "Vanity Pendant", feet: "Vanity Slippers" } }
+  ];
+  const SET_PIECE_KINDS = ["head", "ring", "jewel", "feet"];
+  const SET_DROP_CHANCE_MINIBOSS = 1/400;
+  const SET_DROP_CHANCE_BOSS = 1/125;
+  const SET_DROP_CHANCE_BIOME_BOSS = 1/40;
+
+  function makeSetItem(setId, pieceKind){
+    const setDef = SET_DEFINITIONS.find(s => s.id === setId);
+    if (!setDef) return null;
+    const type = pieceKind === "head" ? "helmet" : pieceKind === "feet" ? "boots" : pieceKind;
+    const icon = pick(TYPE_ICONS[type]);
+    const name = setDef.pieces[pieceKind] || setDef.name + " " + pieceKind;
+    const base = {};
+    if (type === "helmet") { base.shield = Math.round(rand(8, 18)); base.hp = Math.round(rand(5, 14)); }
+    else if (type === "boots") { base.moveSpeed = Math.round(rand(4, 12)); }
+    else if (type === "ring") { base.pickup = Math.round(rand(12, 28)); }
+    else if (type === "jewel") { base.xp = Math.round(rand(4, 12)); }
+    const affixType = (type === "helmet" || type === "boots") ? "armor" : type;
+    const pool = AFFIX_POOL.filter(a => a.kind.includes(affixType));
+    const affCount = 1 + (Math.random() < 0.5 ? 1 : 0);
+    const used = new Set();
+    const affixes = [];
+    for (let i = 0; i < affCount && pool.length; i++) {
+      let a = pick(pool);
+      let safe = 0;
+      while (used.has(a.id) && safe++ < 24) a = pick(pool);
+      used.add(a.id);
+      const v = randi(a.min, a.max);
+      affixes.push({ id: a.id, name: a.name, icon: a.icon, value: v, text: a.fmt(v) });
+    }
+    return { type, rarity: "set", tier: 4, icon, name, base, affixes, setId: setDef.id, setName: setDef.name, setPiece: pieceKind };
   }
 
   function itemScore(it){
@@ -907,6 +1007,8 @@
   function slotForType(type){
     if(type==="weapon") return "weapon";
     if(type==="armor") return "armor";
+    if(type==="helmet") return "head";
+    if(type==="boots") return "feet";
     if(type==="jewel") return "jewel";
     if(type==="ring"){
       if(!equipped.ring1) return "ring1";
@@ -968,6 +1070,7 @@
       thorns: 0,
       xpGainPct: 0,
       lootInvulnSec: 0,
+      bloodPoolChancePct: 0,
     };
 
     if(eq.weapon){
@@ -979,13 +1082,18 @@
       s.maxShield += (eq.armor.base?.shield||0);
       s.maxHP += (eq.armor.base?.hp||0);
     }
+    if(eq.head){
+      s.maxShield += (eq.head.base?.shield||0);
+      s.maxHP += (eq.head.base?.hp||0);
+    }
+    if(eq.feet) s.moveSpeed += (eq.feet.base?.moveSpeed||0);
     if(eq.ring1) s.pickup += (eq.ring1.base?.pickup||0);
     if(eq.ring2) s.pickup += (eq.ring2.base?.pickup||0);
     if(eq.jewel) s.xpGainPct += (eq.jewel.base?.xp||0)/100;
 
     let dmgPct=0, asPct=0, msPct=0, regenPct=0, critAdd=0, critDmgPct=0;
     let splashPct=0, lsPct=0, slowPct=0, thornsPct=0, xpPct=0;
-    let hpFlat=0, shieldFlat=0, pickupFlat=0, pierceAdd=0, lootInvulnSec=0;
+    let hpFlat=0, shieldFlat=0, pickupFlat=0, pierceAdd=0, lootInvulnSec=0, bloodPoolChancePct=0;
 
     const lb=player.levelBonuses||{};
     dmgPct+=lb.dmgPct||0; asPct+=lb.asPct||0; msPct+=lb.msPct||0; regenPct+=lb.regenPct||0;
@@ -1005,7 +1113,7 @@
     dmgPct += wb.dmgPct; asPct += wb.asPct; critAdd += wb.critAdd; critDmgPct += wb.critDmgPct;
     splashPct += wb.splashPct; pierceAdd += wb.pierceAdd;
 
-    const items=[eq.weapon,eq.armor,eq.ring1,eq.ring2,eq.jewel].filter(Boolean);
+    const items=[eq.weapon,eq.head,eq.armor,eq.feet,eq.ring1,eq.ring2,eq.jewel].filter(Boolean);
     for(const it of items){
       for(const a of it.affixes){
         switch(a.id){
@@ -1029,6 +1137,28 @@
       }
     }
 
+    const setSlots = [eq.head, eq.ring1, eq.ring2, eq.jewel, eq.feet];
+    const setCounts = {};
+    for (const it of setSlots) {
+      if (it && it.rarity === "set" && it.setId) setCounts[it.setId] = (setCounts[it.setId] || 0) + 1;
+    }
+    const setPrimary = [0, 0, 10, 25, 50];
+    const setSecondary = [0, 0, 5, 10, 20];
+    for (const setDef of SET_DEFINITIONS) {
+      const n = setCounts[setDef.id] || 0;
+      if (n < 2) continue;
+      const prim = setPrimary[Math.min(n, 4)];
+      const sec = setSecondary[Math.min(n, 4)];
+      const addPrim = (key, val) => {
+        if (key === "msPct") msPct += val; else if (key === "asPct") asPct += val; else if (key === "dmgPct") dmgPct += val;
+        else if (key === "critPct") critAdd += val / 100; else if (key === "xpGainPct") xpPct += val; else if (key === "pickup") pickupFlat += val;
+        else if (key === "hpFlat") hpFlat += val; else if (key === "regenPct") regenPct += val; else if (key === "shieldFlat") shieldFlat += val;
+        else if (key === "bloodPoolChancePct") bloodPoolChancePct += val; else if (key === "lifesteal") lsPct += val / 100;
+      };
+      addPrim(setDef.primary, prim);
+      addPrim(setDef.secondary, sec);
+    }
+
     s.maxHP += hpFlat;
     s.maxShield += shieldFlat;
     s.shieldRegenPct += regenPct/100;
@@ -1049,6 +1179,7 @@
     s.xpGainPct += xpPct;
     s.xpGainPct = Math.max(0, s.xpGainPct);
     s.lootInvulnSec = Math.min(2, lootInvulnSec);
+    s.bloodPoolChancePct = bloodPoolChancePct;
     s.stunChance = wb.stunChance;
     s.stunDuration = wb.stunDuration;
     s.obliterateChance = wb.obliterateChance;
@@ -1083,7 +1214,7 @@
     player.thorns=s.thorns;
     player.xpGainPct=s.xpGainPct;
     player.lootInvulnSec=s.lootInvulnSec;
-    player.lootInvulnSec=s.lootInvulnSec;
+    player.bloodPoolChancePct=s.bloodPoolChancePct;
 
     if(prevMaxHP>0){
       const pct=clamp(player.hp/prevMaxHP,0,1);
@@ -1129,6 +1260,7 @@
     return wrap;
   }
   function renderEquipMini(){
+    if (!equipMini) return;
     equipMini.innerHTML="";
     equipMini.appendChild(renderMini("Weapon","weapon",equipped.weapon));
     equipMini.appendChild(renderMini("Armor","armor",equipped.armor));
@@ -1268,6 +1400,7 @@
     if(!data) return;
     const overlay = document.getElementById("overlay");
     const bloodOrder = ["common","uncommon","rare","legendary"];
+    const lootOrder = ["common","uncommon","rare","legendary","set"];
     const bloodRows = bloodOrder.filter(t=>(data.bloodMlByType[t]||0)>0).map(t=>{
       const label = RAR[t]?.name || t;
       const color = RAR[t]?.color || "rgba(255,255,255,.8)";
@@ -1278,7 +1411,7 @@
       const bt = (typeof window.getBloodType==="function" && window.getBloodType(id)) || { name: id, color: "#c0392b" };
       return `<div class="extractionSummaryRow" style="border-left-color:${bt.color||"#c0392b"}"><span>${bt.name} (samples)</span><span class="mono">${runBlood[id]} ml → lab</span></div>`;
     }).join("");
-    const lootRows = bloodOrder.filter(t=>(data.lootByRarity[t]||0)>0).map(t=>{
+    const lootRows = lootOrder.filter(t=>(data.lootByRarity[t]||0)>0).map(t=>{
       const label = RAR[t]?.name || t;
       const color = RAR[t]?.color || "rgba(255,255,255,.8)";
       return `<div class="extractionSummaryRow" style="border-left-color:${color}"><span>${label}</span><span class="mono">×${data.lootByRarity[t]}</span></div>`;
@@ -1345,6 +1478,15 @@
     if(it.type==="jewel"){
       const x=it.base?.xp||0;
       return `Base: +${x}% XP gain`;
+    }
+    if(it.type==="helmet"){
+      const sh=it.base?.shield||0;
+      const hp=it.base?.hp||0;
+      return `Base: +${sh} shield • +${hp} HP`;
+    }
+    if(it.type==="boots"){
+      const ms=it.base?.moveSpeed||0;
+      return `Base: +${ms} move speed`;
     }
     return "Base: —";
   }
@@ -1479,12 +1621,35 @@
     return wrap;
   }
 
+  const LOOT_COMPARE_TITLES = [
+    "Wow! This might be better in some way.",
+    "Ooh, shiny.",
+    "Might be an upgrade. Might be a downgrade. You do you.",
+    "New loot. Same blood.",
+    "Your gear is judging you from the inventory.",
+    "Statistically speaking, this could be better.",
+    "Upgrade or «eh, I'll take it anyway».",
+    "The numbers want to have a word.",
+    "Could be good. Could be junk. You're the one deciding.",
+    "Your current gear is sweating.",
+    "New drop. Old dilemma.",
+    "Better stats or familiar comfort?",
+    "The loot wants to be compared.",
+    "Side‑by‑side. No pressure.",
+    "One of these is probably better. Probably.",
+    "Loot anxiety: activated.",
+    "Compare, panic, pick.",
+    "New toy. Old toy. Choose.",
+    "The eternal «equip or stash».",
+    "Could be the one. Could be vendor trash.",
+    "Your build is waiting for your call."
+  ];
   function showCompareUI(){
     const {slotKey, currentItem, newItem} = pendingLoot;
     overlay.classList.remove("hidden");
     if(ovHead) ovHead.style.display="";
-    ovTitle.textContent = "Loot — use arrow keys to choose";
-    ovSub.innerHTML = `←/→ select box • <span class="keycap">E</span> or <span class="keycap">Space</span> confirm`;
+    ovTitle.textContent = pick(LOOT_COMPARE_TITLES);
+    ovSub.innerHTML = `<span class="keycap">E</span> to equip <span class="keycap">Esc</span> to stash`;
 
     ovBtns.innerHTML="";
 
@@ -1525,21 +1690,47 @@
   }
 
   function acceptCompare(equipNew, discardNew=false){
-    const idx=lootDrops.indexOf(pendingLoot.drop);
-    if(idx>=0) lootDrops.splice(idx,1);
+    const fromInv = pendingLoot.fromInventory;
+    if (!fromInv && pendingLoot.drop) {
+      const idx = lootDrops.indexOf(pendingLoot.drop);
+      if (idx >= 0) lootDrops.splice(idx, 1);
+    }
 
-    if(equipNew){
-      const it=pendingLoot.newItem;
-      equipped[pendingLoot.slotKey]=it;
-      lootCount++;
-      runLootByRarity[it.rarity]=(runLootByRarity[it.rarity]||0)+1;
+    if (equipNew) {
+      const it = pendingLoot.newItem;
+      const currentItem = pendingLoot.currentItem;
+      if (fromInv) {
+        removeFromInventory(pendingLoot.inventoryIndex);
+        if (currentItem) addToInventory(currentItem);
+      } else {
+        if (currentItem && !addToInventory(currentItem)) {
+          showSimpleToast("Inventory full — current item discarded");
+        } else if (currentItem) {
+          addToInventory(currentItem);
+        }
+        lootCount++;
+        runLootByRarity[it.rarity] = (runLootByRarity[it.rarity] || 0) + 1;
+      }
+      equipped[pendingLoot.slotKey] = it;
+      if (!fromInv) {
+        showToast(it);
+        if (it.rarity === "legendary") { spawnLegendaryBurst(player.x, player.y, false); powerUpLegendary(); }
+        else beepLoot(it.rarity);
+      }
       recomputeBuild();
       renderEquipMini();
-      showToast(it);
-      if(it.rarity==="legendary"){ spawnLegendaryBurst(player.x,player.y,false); powerUpLegendary(); }
-      else beepLoot(it.rarity);
     } else {
-      if(!discardNew) beep({freq:420,dur:0.05,type:"sine",gain:0.03});
+      if (!fromInv) {
+        if (addToInventory(pendingLoot.newItem)) {
+          lootCount++;
+          runLootByRarity[pendingLoot.newItem.rarity] = (runLootByRarity[pendingLoot.newItem.rarity] || 0) + 1;
+          showSimpleToast("Added to inventory");
+        } else if (!discardNew) {
+          beep({ freq: 420, dur: 0.05, type: "sine", gain: 0.03 });
+        }
+      } else if (!discardNew) {
+        beep({ freq: 420, dur: 0.05, type: "sine", gain: 0.03 });
+      }
     }
 
     // Always grant full invuln after confirming (equip or discard), so we don't get one-shot in a pile of loot
@@ -1556,8 +1747,288 @@
     if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     paused=false;
     if(runMusic && musicVol>0){ applyMusicVolume(); runMusic.play().catch(()=>{}); }
+    if (fromInv) {
+      if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
+    }
 
     endCompareInputGate();
+  }
+
+  function cancelCompare(){
+    if (!inCompare || !pendingLoot) return;
+    const fromInv = pendingLoot.fromInventory;
+    if (!fromInv && pendingLoot.drop) {
+      if (addToInventory(pendingLoot.newItem)) {
+        const idx = lootDrops.indexOf(pendingLoot.drop);
+        if (idx >= 0) lootDrops.splice(idx, 1);
+        lootCount++;
+        runLootByRarity[pendingLoot.newItem.rarity] = (runLootByRarity[pendingLoot.newItem.rarity] || 0) + 1;
+        showSimpleToast("Added to inventory");
+      } else {
+        showSimpleToast("Inventory full");
+      }
+      const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+      player.invuln = Math.max(player.invuln, invulnDur);
+      lootPickupCooldown = 0;
+    }
+    pendingLoot = null;
+    inCompare = false;
+    compareLeftCardRef = null;
+    compareRightCardRef = null;
+    overlay.classList.add("hidden");
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    endCompareInputGate();
+    if (fromInv) {
+      if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
+    } else {
+      paused = false;
+      if (runMusic && musicVol > 0) { applyMusicVolume(); runMusic.play().catch(()=>{}); }
+    }
+  }
+
+  // ========= Inventory overlay (I key) =========
+  function toggleInventory(){
+    inventoryOpen = !inventoryOpen;
+    if (inventoryOverlayEl) {
+      inventoryOverlayEl.classList.toggle("hidden", !inventoryOpen);
+      inventoryOverlayEl.setAttribute("aria-hidden", String(!inventoryOpen));
+    }
+    if (inventoryOpen) {
+      if (running) paused = true;
+      renderInventoryUI();
+      bindInventoryDragDrop();
+    } else {
+      const tooltipEl = document.getElementById("inventoryTooltip");
+      if (tooltipEl) tooltipEl.classList.add("hidden");
+      if (running) paused = false;
+      if (runMusic && musicVol > 0) { applyMusicVolume(); runMusic.play().catch(()=>{}); }
+    }
+  }
+  function openInventory(){ if (!inventoryOpen) toggleInventory(); }
+  function closeInventory(){ if (inventoryOpen) toggleInventory(); }
+
+  function getSlotAcceptTypes(slotKey){
+    const map = { weapon: ["weapon"], head: ["helmet"], armor: ["armor"], feet: ["boots"], ring1: ["ring"], ring2: ["ring"], jewel: ["jewel"] };
+    return map[slotKey] || [];
+  }
+  function canItemGoInSlot(item, slotKey){
+    if (!item) return false;
+    const accept = getSlotAcceptTypes(slotKey);
+    return accept.length === 0 || accept.includes(item.type);
+  }
+
+  function buildInventoryItemTooltipContent(item, slotKey){
+    const eqEmpty = { ...equipped };
+    eqEmpty[slotKey] = null;
+    const eqWith = { ...equipped };
+    eqWith[slotKey] = item;
+    const sEmpty = computeStats(eqEmpty);
+    const sWith = computeStats(eqWith);
+    const diffs = getStatDiffs(sEmpty, sWith);
+    const c = RAR[item.rarity]?.color || "#9AA3AE";
+    const baseLine = baseLineFor(item);
+    const affHTML = item.affixes?.length
+      ? item.affixes.map(a => `<span class="pill">${a.icon} ${a.text}</span>`).join("")
+      : `<span class="pill" style="opacity:.6;">No affixes</span>`;
+    const diffHTML = diffs.length
+      ? "<div class=\"cmpDiffs\">" + diffs.map(d => {
+          const cls = d.goodB ? "cmpDiffGood" : "cmpDiffBad";
+          return `<div class="cmpDiffLine ${cls}">${d.label} ${d.fmtB}</div>`;
+        }).join("") + "</div>"
+      : "";
+    return `
+      <div class="cmpTop">
+        <div class="cmpName">${item.name}</div>
+        <div class="cmpRar" style="color:${c}; border-color:${c}66;">${rarityLabel(item.rarity)}</div>
+      </div>
+      <div class="cmpMain">
+        <div class="cmpIcon" style="border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 34px ${c}35;">${item.icon}</div>
+        <div class="cmpText">
+          <div class="cmpLine">${item.type.toUpperCase()} • ${baseLine}</div>
+          <div class="pillRow">${affHTML}</div>
+          ${diffHTML}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderInventoryUI(){
+    const statsPanel = document.getElementById("inventoryStatsPanel");
+    if (statsPanel) {
+      const s = computeStats(equipped);
+      const dps = estimateDPS(s);
+      let rows = STAT_KEYS.map(m => `<div class="invStatRow"><span class="invStatLabel">${m.icon} ${m.label}</span><span class="invStatVal">${m.fmt(s[m.k])}</span></div>`).join("");
+      rows += `<div class="invStatRow invStatRowDps"><span class="invStatLabel">⚔️ DPS</span><span class="invStatVal">${Math.round(dps)}</span></div>`;
+      statsPanel.innerHTML = `<div class="invStatTitle">Current stats</div><div class="invStatList">${rows}</div>`;
+    }
+    if (!inventoryFigureEl || !inventoryGridEl) return;
+    const slotKeys = ["head", "jewel", "armor", "weapon", "ring1", "ring2", "feet"];
+    for (const slotKey of slotKeys) {
+      let el = inventoryFigureEl.querySelector(`.invSlot[data-slot="${slotKey}"]`);
+      if (!el) continue;
+      const item = equipped[slotKey] || null;
+      const label = slotKey === "head" ? "Head" : slotKey === "jewel" ? "Neck" : slotKey === "armor" ? "Armor" : slotKey === "weapon" ? "Weapon" : slotKey === "ring1" ? "Ring 1" : slotKey === "ring2" ? "Ring 2" : "Feet";
+      const emptyPreview = slotKey === "head" ? { icon: "🎩", name: "—" } : slotKey === "weapon" ? { icon: "🔫", name: "—" } : slotKey === "armor" ? { icon: "👗", name: "—" } : slotKey === "jewel" ? { icon: "💎", name: "—" } : slotKey === "feet" ? { icon: "🥾", name: "—" } : { icon: "💍", name: "—" };
+      const preview = item ? item : emptyPreview;
+      const c = item ? RAR[item.rarity]?.color || "#9AA3AE" : "rgba(255,255,255,.35)";
+      el.innerHTML = `<div class="invSlotIcon" style="border-color:${c}66;">${preview.icon || "?"}</div><span class="invSlotLabel">${label}</span>`;
+      el.dataset.slot = slotKey;
+      el.classList.add("invSlotEquipment");
+    }
+    const maxSlots = getInventoryMaxSlots();
+    inventoryGridEl.innerHTML = "";
+    for (let i = 0; i < maxSlots; i++) {
+      const cell = document.createElement("div");
+      cell.className = "invGridCell";
+      cell.dataset.index = String(i);
+      const item = inventory[i] || null;
+      if (item) {
+        const c = RAR[item.rarity]?.color || "#9AA3AE";
+        cell.innerHTML = `<div class="invSlotIcon" style="border-color:${c}66;">${item.icon || "?"}</div>`;
+        cell.title = item.name || "";
+      }
+      inventoryGridEl.appendChild(cell);
+    }
+  }
+
+  let inventoryDragSource = null;
+  function bindInventoryDragDrop(){
+    if (!inventoryFigureEl || !inventoryGridEl) return;
+    const slotKeys = ["head", "jewel", "armor", "weapon", "ring1", "ring2", "feet"];
+    const equipmentSlots = slotKeys.map(k => inventoryFigureEl.querySelector(`.invSlot[data-slot="${k}"]`)).filter(Boolean);
+    const cells = Array.from(inventoryGridEl.querySelectorAll(".invGridCell"));
+
+    function clearDragState(){
+      inventoryDragSource = null;
+      document.body.classList.remove("invDragging");
+    }
+
+    function onDragStart(source, item, sourceType, sourceIndex){
+      if (!item) return;
+      inventoryDragSource = { source, item, sourceType, sourceIndex };
+      document.body.classList.add("invDragging");
+    }
+    function onDrop(targetSlotKey, targetIndex){
+      if (!inventoryDragSource) return;
+      const { item, sourceType, sourceIndex } = inventoryDragSource;
+      if (targetSlotKey != null) {
+        if (!canItemGoInSlot(item, targetSlotKey)) { clearDragState(); return; }
+        const existing = equipped[targetSlotKey] || null;
+        equipped[targetSlotKey] = item;
+        if (sourceType === "equipment") {
+          const sk = ["head","jewel","armor","weapon","ring1","ring2","feet"][sourceIndex];
+          if (sk === targetSlotKey) { equipped[targetSlotKey] = existing; clearDragState(); return; }
+          equipped[sk] = existing;
+        } else {
+          removeFromInventory(sourceIndex);
+          if (existing) addToInventory(existing);
+        }
+      } else {
+        if (sourceType === "equipment") {
+          const sk = ["head","jewel","armor","weapon","ring1","ring2","feet"][sourceIndex];
+          if (inventory.length >= getInventoryMaxSlots()) { clearDragState(); return; }
+          equipped[sk] = null;
+          addToInventory(item);
+        } else {
+          const existing = inventory[targetIndex] || null;
+          if (sourceIndex === targetIndex) { clearDragState(); return; }
+          inventory[targetIndex] = item;
+          inventory[sourceIndex] = existing;
+          saveInventory();
+        }
+      }
+      recomputeBuild();
+      renderEquipMini();
+      renderInventoryUI();
+      bindInventoryDragDrop();
+      clearDragState();
+    }
+
+    const tooltipEl = document.getElementById("inventoryTooltip");
+    const appEl = document.getElementById("app");
+    function showItemTooltip(el, item, slotKey) {
+      if (!tooltipEl || !item) return;
+      tooltipEl.innerHTML = buildInventoryItemTooltipContent(item, slotKey);
+      tooltipEl.classList.remove("hidden");
+      const rect = el.getBoundingClientRect();
+      const gap = 10;
+      requestAnimationFrame(() => {
+        const ttRect = tooltipEl.getBoundingClientRect();
+        const appRect = appEl ? appEl.getBoundingClientRect() : { left: 0, top: 0, width: 1920, height: 1080 };
+        const designW = 1920, designH = 1080;
+        const scaleX = appRect.width / designW, scaleY = appRect.height / designH;
+        // Prefer right of item; else left. Keep tooltip close to the element (viewport coords).
+        let viewportLeft = rect.right + gap;
+        if (viewportLeft + ttRect.width > window.innerWidth - 8) viewportLeft = rect.left - ttRect.width - gap;
+        if (viewportLeft < 8) viewportLeft = 8;
+        // Vertically align tooltip with element (centered), then clamp to viewport
+        let viewportTop = rect.top + (rect.height / 2) - (ttRect.height / 2);
+        if (viewportTop + ttRect.height > window.innerHeight - 8) viewportTop = window.innerHeight - ttRect.height - 8;
+        if (viewportTop < 8) viewportTop = 8;
+        // Tooltip is inside #app which has transform; fixed uses #app's design coords — convert viewport to design px
+        const designLeft = (viewportLeft - appRect.left) / scaleX;
+        const designTop = (viewportTop - appRect.top) / scaleY;
+        tooltipEl.style.left = designLeft + "px";
+        tooltipEl.style.top = designTop + "px";
+      });
+    }
+    function hideItemTooltip() {
+      if (tooltipEl) tooltipEl.classList.add("hidden");
+    }
+
+    equipmentSlots.forEach((el, idx) => {
+      const slotKey = slotKeys[idx];
+      const it = equipped[slotKey];
+      el.ondragover = (e) => { e.preventDefault(); if (inventoryDragSource && canItemGoInSlot(inventoryDragSource.item, slotKey)) el.classList.add("invDropTarget"); };
+      el.ondragleave = () => el.classList.remove("invDropTarget");
+      el.ondrop = (e) => { e.preventDefault(); el.classList.remove("invDropTarget"); onDrop(slotKey, null); };
+      if (it) {
+        el.onmouseenter = () => showItemTooltip(el, it, slotKey);
+        el.onmouseleave = () => hideItemTooltip();
+      } else {
+        el.onmouseenter = null;
+        el.onmouseleave = null;
+      }
+    });
+    cells.forEach((cell, idx) => {
+      const it = inventory[idx];
+      cell.ondragover = (e) => { e.preventDefault(); cell.classList.add("invDropTarget"); };
+      cell.ondragleave = () => cell.classList.remove("invDropTarget");
+      cell.ondrop = (e) => { e.preventDefault(); cell.classList.remove("invDropTarget"); onDrop(null, idx); };
+      if (it) {
+        const slotKey = slotForType(it.type);
+        cell.onmouseenter = () => showItemTooltip(cell, it, slotKey);
+        cell.onmouseleave = () => hideItemTooltip();
+        cell.onclick = (e) => {
+          if (inventoryDragSource) return;
+          e.preventDefault();
+          openCompareFromInventory(it, idx);
+        };
+      } else {
+        cell.onmouseenter = null;
+        cell.onmouseleave = null;
+        cell.onclick = null;
+      }
+    });
+
+    document.body.onmouseup = () => { if (inventoryDragSource) { clearDragState(); renderInventoryUI(); bindInventoryDragDrop(); } };
+    document.body.onmouseleave = () => { if (inventoryDragSource) { clearDragState(); renderInventoryUI(); bindInventoryDragDrop(); } };
+
+    equipmentSlots.forEach((el, idx) => {
+      const slotKey = slotKeys[idx];
+      el.draggable = !!equipped[slotKey];
+      el.ondragstart = (e) => {
+        const it = equipped[slotKey];
+        if (it) { e.dataTransfer.setData("text/plain", slotKey); e.dataTransfer.effectAllowed = "move"; onDragStart(el, it, "equipment", idx); }
+      };
+    });
+    cells.forEach((cell, idx) => {
+      cell.draggable = !!inventory[idx];
+      cell.ondragstart = (e) => {
+        const it = inventory[idx];
+        if (it) { e.dataTransfer.setData("text/plain", "inv-" + idx); e.dataTransfer.effectAllowed = "move"; onDragStart(cell, it, "inventory", idx); }
+      };
+    });
   }
 
   // ========= Drops / XP =========
@@ -1570,7 +2041,33 @@
     while(orbs.length > MAX_ORBS) orbs.shift();
     showTutorial("xp_orb", "XP orbs grant experience. Collect them to level up and become stronger.", x, y);
   }
-  function dropLoot(x,y, elite=false, boss=false, miniboss=false){
+  function dropLoot(x,y, elite=false, boss=false, miniboss=false, biomeBoss=false){
+    if (miniboss && Math.random() < SET_DROP_CHANCE_MINIBOSS) {
+      const setId = pick(SET_DEFINITIONS).id;
+      const pieceKind = pick(SET_PIECE_KINDS);
+      const item = makeSetItem(setId, pieceKind);
+      if (item) {
+        const dropX = x + rand(-14, 14) * PX, dropY = y + rand(-14, 14) * PX;
+        lootDrops.push({ x: dropX, y: dropY, r: 12 * PX, item, t: 0, bob: rand(0, Math.PI * 2) });
+        while (lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
+      }
+      return;
+    }
+    if (boss && !miniboss) {
+      const setChance = biomeBoss ? SET_DROP_CHANCE_BIOME_BOSS : SET_DROP_CHANCE_BOSS;
+      if (Math.random() < setChance) {
+        const setId = pick(SET_DEFINITIONS).id;
+        const pieceKind = pick(SET_PIECE_KINDS);
+        const item = makeSetItem(setId, pieceKind);
+        if (item) {
+          const dropX = x + rand(-14, 14) * PX, dropY = y + rand(-14, 14) * PX;
+          lootDrops.push({ x: dropX, y: dropY, r: 12 * PX, item, t: 0, bob: rand(0, Math.PI * 2) });
+          while (lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
+        }
+        return;
+      }
+    }
+
     const rawP = boss && !miniboss ? 0.72 : miniboss ? 0.52 : elite ? BASE.lootDropElite : BASE.lootDropBase;
     let p = rawP * 0.20 * 1.20;
     if(Math.random()>p) return;
@@ -1979,7 +2476,9 @@
     // Blood pool: only some enemies drop blood; bosses always do.
     let makeBloodPool = true;
     if(!e.boss){
-      const p = e.elite ? BLOOD_POOL_CHANCE_ELITE : BLOOD_POOL_CHANCE_NORMAL;
+      let p = e.elite ? BLOOD_POOL_CHANCE_ELITE : BLOOD_POOL_CHANCE_NORMAL;
+      const mult = 1 + (player.bloodPoolChancePct || 0) / 100;
+      p = Math.min(1, p * mult);
       if(Math.random() >= p) makeBloodPool = false;
     }
     if(makeBloodPool){
@@ -2061,10 +2560,42 @@
     pendingLoot={drop,slotKey,currentItem,newItem};
     inCompare=true;
     paused=true;
-    // Invulnerable as soon as we touch loot and while choosing (game is paused; invuln set so we're safe on exit too)
     const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
     player.invuln = Math.max(player.invuln, invulnDur);
     showCompareUI();
+  }
+  function openCompareFromInventory(item, inventoryIndex){
+    const tooltipEl = document.getElementById("inventoryTooltip");
+    if (tooltipEl) tooltipEl.classList.add("hidden");
+    const slotKey = slotForType(item.type);
+    const currentItem = equipped[slotKey] || null;
+    pendingLoot = { drop: null, slotKey, currentItem, newItem: item, fromInventory: true, inventoryIndex };
+    inCompare = true;
+    paused = true;
+    if (inventoryOpen && inventoryOverlayEl) inventoryOverlayEl.classList.add("hidden");
+    overlay.classList.remove("hidden");
+    if (ovHead) ovHead.style.display = "";
+    ovTitle.textContent = "Compare — equip or keep in inventory";
+    ovSub.innerHTML = `←/→ select • <span class="keycap">E</span> or <span class="keycap">Space</span> confirm • <span class="keycap">Esc</span> cancel`;
+    ovBtns.innerHTML = "";
+    const eqA = { ...equipped };
+    const eqB = { ...equipped };
+    eqB[slotKey] = item;
+    const sA = computeStats(eqA);
+    const sB = computeStats(eqB);
+    const diffs = getStatDiffs(sA, sB);
+    const leftDiffs = diffs.map(d => ({ label: d.label, fmt: d.fmtA, good: d.goodA }));
+    const rightDiffs = diffs.map(d => ({ label: d.label, fmt: d.fmtB, good: d.goodB }));
+    compareSelectionIndex = 0;
+    ovBody.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "ovGrid ovGridCompare";
+    compareLeftCardRef = renderCompareCard(currentItem, slotKey, "Currently equipped", leftDiffs, true);
+    compareRightCardRef = renderCompareCard(item, slotKey, "Inventory", rightDiffs, false);
+    grid.appendChild(compareLeftCardRef);
+    grid.appendChild(compareRightCardRef);
+    ovBody.appendChild(grid);
+    beginCompareInputGate();
   }
 
   // ========= keyboard choose handling while compare is open =========
@@ -2871,6 +3402,16 @@
           info.next = level >= maxLevel ? "Max level reached." : "Obliterate chance at next level: " + pct(nxt) + " on normal mobs.";
           break;
         }
+        case "loot_inv_slots": {
+          const baseSlots = 10;
+          const perLevel = 2;
+          const cur = baseSlots + perLevel * level;
+          const nxt = baseSlots + perLevel * nextLevel;
+          info.desc = "Increase maximum inventory (backpack) slots.";
+          info.current = "Inventory slots: " + cur;
+          info.next = level >= maxLevel ? "Max level reached." : "Inventory slots at next level: " + nxt;
+          break;
+        }
         default: {
           info.desc = "No detailed description yet.";
           info.current = level <= 0 ? "No effect yet." : "Effect is active.";
@@ -3245,8 +3786,10 @@
     const margin = 80 * PX * mapScale;
     const manholeR = 32 * PX;
     const fountainCx = mapW / 2, fountainCy = mapH / 2;
+    const fountainPoolR = 80 * 1.4 * PX;  // same radius as drawFountain pool
     const FOUNTAIN_MIN_SPAWN_DIST = 100 * PX;  // minimum 100px between fountain center and spawned geometry
-    const avoidR = Math.max(FOUNTAIN_MIN_SPAWN_DIST, ((80 * 1.4 * PX) + manholeR + 40 * PX) * mapScale);
+    // No buildings/props inside fountain: keep center at least poolR + half largest building (6*48*PX/2)
+    const avoidR = Math.max(FOUNTAIN_MIN_SPAWN_DIST, fountainPoolR + 0.5 * 6 * 48 * PX);
     const MIN_MANHOLE_SEP = 70 * PX;
     manholes = [];
     for (let row = 0; row < 3; row++) {
@@ -3458,7 +4001,7 @@
     player.lastDir="front";
 
     if(!keepEquipped){
-      equipped={weapon:null, armor:null, ring1:null, ring2:null, jewel:null};
+      equipped={weapon:null, head:null, armor:null, feet:null, ring1:null, ring2:null, jewel:null};
     }
     player.levelBonuses={};
     recomputeBuild();
@@ -3518,9 +4061,9 @@
     stopMenuMusic(); // ensure menu music is off before starting run track
     if(musicVol>0) runMusic.play().catch(()=>{});
 
-    // Fountain decor: randomize position each run; currently always duck for easy mode.
+    // Fountain decor: randomize position each run; upper half of fountain only (same spawn logic).
     fountainDecorKind = "duck";
-    fountainDecorAngle = rand(0, Math.PI * 2);
+    fountainDecorAngle = rand(Math.PI, Math.PI * 2);  // upper half (y above center)
     fountainDecorRadiusFrac = 0.32 + rand(0, 0.16);
 
     // Level 1-1 uses custom manhole-cluster scenario; other levels use standard initial spawns
@@ -3542,6 +4085,8 @@
   const LEVEL11_MINIBOSS_DELAY_SEC = 30;
   const LEVEL11_WELD_DURATION_SEC = 3.0;
   const LEVEL11_WELD_RADIUS = 70; // world units before DPR multiplier applied when used
+  /** Radius around fountain center where player is safe: no zone aggro. Prevents instant agro on spawn. */
+  const FOUNTAIN_SAFE_RADIUS = Math.max(280 * PX, (BASE.bulletSpeed * BASE.bulletLife) * PX * 1.2);
 
   function setupLevel11Zones(){
     if(!level11Active || !manholes || !manholes.length) return;
@@ -3575,7 +4120,8 @@
         minibossSpawned: false,
         spawnsStopped: false,
         spawnAcc: 0,
-        closed: false
+        closed: false,
+        weldMs: 0
       };
       level11Zones.push(zone);
       spawnLevel11ClusterForZone(zone);
@@ -3617,11 +4163,16 @@
   function updateLevel11Zones(dt, elapsed){
     if(!level11Active || !level11Zones.length) return;
 
+    const fountainCx = mapW / 2, fountainCy = mapH / 2;
+    const distToFountain = Math.hypot(player.x - fountainCx, player.y - fountainCy);
+    const inSafeZone = distToFountain < FOUNTAIN_SAFE_RADIUS;
+
     for(const zone of level11Zones){
       const m = manholes[zone.manholeIndex];
       if(!m) continue;
 
       if(!zone.activated){
+        if(inSafeZone) continue; // no zone activates while player is in fountain safe radius
         // Check if player enters aggression zone around corpse
         const dx = player.x - zone.corpseX;
         const dy = player.y - zone.corpseY;
@@ -3732,25 +4283,24 @@
 
     if(!candidate){
       level11WeldingZoneId = null;
-      level11WeldMs = 0;
       return;
     }
 
     if(level11WeldingZoneId !== candidate.id){
       level11WeldingZoneId = candidate.id;
-      level11WeldMs = 0;
     }
+    if(typeof candidate.weldMs !== "number") candidate.weldMs = 0;
 
-    // Pause welding during compare/menus
+    // Pause welding during compare/menus (progress stays on zone; resumes when back)
     if(inCompare || paused || victoryPhase) return;
 
-    level11WeldMs += dt * 1000;
-    if(level11WeldMs >= LEVEL11_WELD_DURATION_SEC * 1000){
+    candidate.weldMs += dt * 1000;
+    if(candidate.weldMs >= LEVEL11_WELD_DURATION_SEC * 1000){
       candidate.closed = true;
+      candidate.weldMs = 0;
       level11ZonesCleared++;
       if(level11ZonesCleared > level11Zones.length) level11ZonesCleared = level11Zones.length;
       level11WeldingZoneId = null;
-      level11WeldMs = 0;
 
       // Mark underlying manhole as closed and spawn a small ring effect
       const manhole = manholes[candidate.manholeIndex];
@@ -3856,20 +4406,13 @@
     tTag.textContent=formatTime(elapsedS);
     kTag.textContent=`${kills}`;
     lTag.textContent=`${lootCount}`;
-    dpsTag.textContent=`DPS ${Math.round(player.dpsEst)}`;
-    streakTag.textContent=`${streak}`;
-    threatTag.textContent=`${threat.toFixed(2)}×`;
-
-    // NEW: show only during active run; keep out of menus/overlays
-    const showRunStats = running; // running is false in menus/after victory/game over
-    dmgWrap.style.display = showRunStats ? "inline-flex" : "none";
-    atkWrap.style.display = showRunStats ? "inline-flex" : "none";
-
-    if(showRunStats){
-      dmgTag.textContent = `DMG ${Math.round(player.dmg)}`;
-      const atkPerSec = 1 / Math.max(0.0001, player.atkRate);
-      atkTag.textContent = `ATK ${atkPerSec.toFixed(2)}/s`;
-    }
+    if(dpsTag) dpsTag.textContent=`DPS ${Math.round(player.dpsEst)}`;
+    if(streakTag) streakTag.textContent=`${streak}`;
+    if(threatTag) threatTag.textContent=`${threat.toFixed(2)}×`;
+    if(dmgWrap) dmgWrap.style.display = running ? "inline-flex" : "none";
+    if(atkWrap) atkWrap.style.display = running ? "inline-flex" : "none";
+    if(dmgTag) dmgTag.textContent = `DMG ${Math.round(player.dmg)}`;
+    if(atkTag){ const atkPerSec = 1 / Math.max(0.0001, player.atkRate); atkTag.textContent = `ATK ${atkPerSec.toFixed(2)}/s`; }
 
     if(hudQuestStatus){
       const is11 = running && currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones && level11Zones.length > 0;
@@ -4066,7 +4609,7 @@
         if(p.t>p.life) particles.splice(i,1);
       }
       if(deathSequence.t >= deathSequence.duration){
-        equipped = { weapon: null, armor: null, ring1: null, ring2: null, jewel: null };
+        equipped = { weapon: null, head: null, armor: null, feet: null, ring1: null, ring2: null, jewel: null };
         deathSequence = null;
         gameOver();
       }
@@ -4467,7 +5010,26 @@
       const d2p=dist2(L.x,L.y,player.x,player.y);
       const rr=player.r+L.r;
       if(d2p < rr*rr && lootPickupCooldown<=0){
-        openCompare(L);
+        const slotKey = slotForType(L.item.type);
+        const currentItem = equipped[slotKey] || null;
+        let skipCompare = false;
+        if (currentItem) {
+          const sA = computeStats(equipped);
+          const sB = computeStats({ ...equipped, [slotKey]: L.item });
+          const diffs = getStatDiffs(sA, sB);
+          if (diffs.length > 0 && diffs.every(d => !d.goodB)) {
+            skipCompare = true;
+            lootDrops.splice(i, 1);
+            addToInventory(L.item);
+            lootCount++;
+            runLootByRarity[L.item.rarity] = (runLootByRarity[L.item.rarity] || 0) + 1;
+            const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+            player.invuln = Math.max(player.invuln, invulnDur);
+            lootPickupCooldown = 0;
+            showSimpleToast("Added to inventory (weaker)");
+          }
+        }
+        if (!skipCompare) openCompare(L);
         break;
       }
     }
@@ -4747,6 +5309,16 @@
     ctx.fillText(isDuck ? "🦆" : "💀", 0, 0);
     ctx.restore();
     ctx.restore();
+    ctx.restore();
+    // Permanent control hint inside fountain water, mid and below center, black text (large caps)
+    ctx.save();
+    ctx.font = `bold ${18*PX}px ui-sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#000";
+    const textY = cy + waterR * 0.32 - 10;
+    ctx.fillText("ARROWS = SHOOT", cx, textY);
+    ctx.fillText("WASD = MOVE", cx, textY + 22*PX);
     ctx.restore();
   }
 
@@ -5711,11 +6283,14 @@
     if(!level11Active || level11WeldingZoneId == null) return;
     const zone = level11Zones.find(z => z.id === level11WeldingZoneId);
     if(!zone) return;
-    const t = clamp(level11WeldMs / (LEVEL11_WELD_DURATION_SEC * 1000), 0, 1);
+    const m = manholes[zone.manholeIndex];
+    if(!m) return;
+    const weldMs = typeof zone.weldMs === "number" ? zone.weldMs : 0;
+    const t = clamp(weldMs / (LEVEL11_WELD_DURATION_SEC * 1000), 0, 1);
     const bw = 72 * PX;
     const bh = 12 * PX;
-    const x = player.x - bw / 2;
-    const y = player.y - player.r - 52 * PX; // slightly above blood gather bar
+    const x = m.x - bw / 2;
+    const y = m.y - m.r - 28 * PX;
     const fillW = bw * (1 - t);
     ctx.save();
     try {

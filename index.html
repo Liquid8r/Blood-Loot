@@ -43,29 +43,10 @@
       <div id="hudQuestStatus" class="hudQuestStatus" style="display:none; margin-top:8px; padding:6px 10px; background:rgba(0,0,0,0.4); border-radius:8px; font-size:12px; color:rgba(234,242,255,0.95);"></div>
     </div>
 
-    <div id="hudTR" class="hudCard">
-      <div class="tag"><span>⚔️</span><span id="dpsTag" class="mono">DPS 0</span></div>
-      <div class="tag"><span>🔥</span><span id="streakTag" class="mono">0</span></div>
-      <div class="tag"><span>🎚️</span><span id="threatTag" class="mono">1.00×</span></div>
-
-      <!-- NEW: small in-run-only tags -->
-      <div class="tag" id="dmgWrap"><span>💥</span><span id="dmgTag" class="mono">DMG 0</span></div>
-      <div class="tag" id="atkWrap"><span>💨</span><span id="atkTag" class="mono">ATK 0.00/s</span></div>
-    </div>
-
-    <div id="hudBR" class="hudCard">
-      <div class="row">
-        <div class="tiny">Equipment</div>
-        <div class="tiny">Move: WASD/↑↓←→ • Dash: <span class="keycap">Space</span> • Pause: <span class="keycap">P</span></div>
-      </div>
-      <div style="height:8px;"></div>
-      <div id="equipMini"></div>
-    </div>
   </div>
 
   <div id="toast"></div>
   <div id="bossBanner">⚠️ BOSS APPROACHING! ⚠️</div>
-  <div id="hint">Loot pauses + compare. Boss mid-run with higher loot chance. Legendary = gold burst + power-up sound. <span class="hintExtract">Extraction: <span class="keycap">X</span></span></div>
 
   <div id="overlay">
     <div id="overlayCard">
@@ -79,6 +60,39 @@
       </div>
       <div id="ovBody"></div>
     </div>
+  </div>
+
+  <!-- Inventory overlay: character panel (left) | inventory panel (center) | stats panel (right). Open with I. -->
+  <div id="inventoryOverlay" class="inventoryOverlay hidden" aria-hidden="true">
+    <div class="inventoryOverlayRow">
+      <div id="inventoryCharacterPanel" class="inventoryCharacterPanel">
+        <div class="inventoryCharacterTitle">Character</div>
+        <div class="inventoryFigureWrap">
+          <div class="inventoryFigure" id="inventoryFigure">
+            <!-- Vitruvian cat: drag-and-drop slots. Filled by JS. -->
+            <div class="invSlot invSlotHead" data-slot="head" title="Head"></div>
+            <div class="invSlot invSlotNeck" data-slot="jewel" title="Neck"></div>
+            <div class="invSlot invSlotArmor" data-slot="armor" title="Armor"></div>
+            <div class="invSlot invSlotWeapon" data-slot="weapon" title="Weapon"></div>
+            <div class="invSlot invSlotRing1" data-slot="ring1" title="Ring 1"></div>
+            <div class="invSlot invSlotRing2" data-slot="ring2" title="Ring 2"></div>
+            <div class="invSlot invSlotFeet" data-slot="feet" title="Feet"></div>
+          </div>
+        </div>
+      </div>
+      <div class="inventoryPanel">
+        <div class="inventoryHeader">
+          <h2 class="inventoryTitle">Inventory</h2>
+          <span class="inventoryHint"><span class="keycap">I</span> close</span>
+        </div>
+        <div class="inventoryGridWrap">
+          <div class="inventoryGridLabel">Backpack</div>
+          <div class="inventoryGrid" id="inventoryGrid"></div>
+        </div>
+      </div>
+      <div id="inventoryStatsPanel" class="inventoryStatsPanel"></div>
+    </div>
+    <div id="inventoryTooltip" class="inventoryItemTooltip hidden"></div>
   </div>
   </div><!-- /#app -->
 
