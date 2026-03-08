@@ -86,7 +86,7 @@
   if(inventoryOverlayEl) inventoryOverlayEl.oncontextmenu = (e) => e.preventDefault();
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.005.1";
+  const GAME_VERSION = "1.005.2";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -502,13 +502,32 @@
     }
     if((k==="p" || k==="escape") && running){ togglePause(); return; }
     if(k==="x" && running && !paused && !inCompare && !victoryPhase && extractionCountdown==null && extractionLiftoff==null && player.hp>0){
-      if(!bossKilled){
-        showSimpleToast("Kill the boss first — Extraction available after boss.");
+      const is11 = currentLevelConfig && currentLevelConfig.id === "1-1";
+      const canTriggerMalfunction = is11 && (
+        level11StoryPhase === "extractReady" ||
+        (level11StoryPhase === "welded" && level11Dialogue && level11Dialogue.lines && level11Dialogue.lines.length >= 2 && level11Dialogue.lineIndex >= 1)
+      );
+      if(canTriggerMalfunction){
         e.preventDefault();
-      } else {
-        extractionCountdown = EXTRACTION_COUNTDOWN_SEC;
-        e.preventDefault();
+        level11StoryPhase = "malfunction";
+        level11StoryTimer = 0;
+        level11Dialogue = null;
+        showSimpleToast("Malfunction — Launch rockets unresponsive.");
+        level11ShowDialogue([
+          { speaker: "character", text: "Rockets are jammed. I might not make it back..." },
+          { speaker: "commander", text: "We've picked up something big on the radar. Hold your position." }
+        ]);
+        return;
       }
+      if(is11 && level11StoryPhase === "postBossExtractReady"){
+        e.preventDefault();
+        extractionCountdown = EXTRACTION_COUNTDOWN_SEC;
+        return;
+      }
+      if(is11 && level11StoryPhase !== "postBossExtractReady"){ e.preventDefault(); return; }
+      if(!bossKilled){ e.preventDefault(); return; }
+      extractionCountdown = EXTRACTION_COUNTDOWN_SEC;
+      e.preventDefault();
     }
     if(k==="i" && !inCompare){
       e.preventDefault();
@@ -828,6 +847,28 @@
   let level11BossPhaseMs = 0;
   let level11Kills = 0;           // non-boss kills on 1-1 for guaranteed weapon drop window
   let level11WeaponDropped = false;
+  let level11DistanceMoved = 0;   // total distance moved on 1-1; aggro allowed only after 60px
+  // Level 1-1 story: "clear" | "weldHint" | "welded" | "extractReady" | "malfunction" | "radarRead" | "bossAlert" | "bossPan" | "bossSpawned" | "postBossExtractReady"
+  let level11StoryPhase = "clear";
+  let level11StoryTimer = 0;
+  let level11Dialogue = null;     // { lines: [{ text, speaker }], lineIndex, charIndex, nextCharAt } typewriter
+  let level11RedAlert = null;     // legacy: used only for 2s bossAlert timer before spawn
+  let level11RedOverlay = null;   // { phase: 'full'|'deathAnim'|'fade', t, bossSpawnAt?, deathAnimDuration?, fadeDuration? } red tint until post-boss dialogue
+  let level11CameraPan = null;    // { phase: "toBoss"|"hold"|"toPlayer", t, fromX, fromY, toX, toY, holdAt, duration }
+  let level11CamTargetX = null;   // when set, render uses this for camera instead of player.x
+  let level11CamTargetY = null;
+  const LEVEL11_DIALOGUE_CHAR_MS = 42;
+  // Main rule for all narrator/commander dialogue: keep full text on screen this long after typewriter finishes (reading time). Use ~2s for future dialogue.
+  const LEVEL11_DIALOGUE_DISPLAY_MS = 2000;
+  const LEVEL11_WELD_HINT_KILLS = 10;
+  const LEVEL11_DIALOGUE_FONT = '"Press Start 2P", monospace';
+  const LEVEL11_DIALOGUE_PORTRAIT_WIDTH = 88; // Space for speaker portrait to the left of the speech bubble (Commander Astra / player).
+  const dialoguePortraits = {
+    commander: new Image(),
+    character: new Image()
+  };
+  dialoguePortraits.commander.src = "assets/graphics/Commander_Astra_Speak.png";
+  dialoguePortraits.character.src = "assets/graphics/Main_Character_Speak.png";
 
   // Skittering Mouse sprites (2-frame animation: move1, move2)
   const skMouseSprites = {
@@ -952,9 +993,7 @@
     baseScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
     equipped = { weapon: null, head: null, armor: null, feet: null, ring1: null, ring2: null, jewel: null };
     inventory = [];
-    // Reset intel and achievements
-    if(typeof unlockedIntel !== "undefined") unlockedIntel = { orders: ["recruitment"], bestiary: [], seenIds: [] };
-    if(typeof achievementProgress !== "undefined") achievementProgress = {};
+    // Intel and achievements are cleared via PROGRESSION_KEYS (localStorage); they get default values when initialized later.
   }
 
   // One-time reset: bump version to clear all progression for a clean release.
@@ -3231,7 +3270,6 @@
       orbs.push({ x:x+rand(-10,10)*PX, y:y+rand(-10,10)*PX, r:(boss?7:elite?6:4)*PX, vx:rand(-20,20)*PX, vy:rand(-20,20)*PX });
     }
     while(orbs.length > MAX_ORBS) orbs.shift();
-    showTutorial("xp_orb", "XP orbs grant experience. Collect them to level up and become stronger.", x, y);
   }
   function dropLoot(x,y, elite=false, boss=false, miniboss=false, biomeBoss=false){
     if (miniboss && Math.random() < SET_DROP_CHANCE_MINIBOSS) {
@@ -3281,8 +3319,6 @@
     const dropX = x+rand(-14,14)*PX, dropY = y+rand(-14,14)*PX;
     lootDrops.push({ x:dropX, y:dropY, r:12*PX, item, t:0, bob:rand(0,Math.PI*2) });
     while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
-
-    showTutorial("item_drop", "Items drop from defeated enemies. Walk over them to pick up and compare with your current gear.", dropX, dropY);
 
     // Track guaranteed weapon drop window for level 1-1
     if(levelId === "1-1" && !level11WeaponDropped && item.type === "weapon" && level11Kills <= 10){
@@ -3356,12 +3392,21 @@
   // ========= Enemies & Boss =========
   /** Minimum distance from player for enemy spawns – player can move a bit before mice become a threat. */
   const MIN_SPAWN_DIST_FROM_PLAYER = Math.max(260 * PX, (BASE.bulletSpeed * BASE.bulletLife) * PX * 1.12);
+  const SPAWN_MAP_MARGIN = 40 * PX;
   function ensureSpawnMinDistFromPlayer(x, y){
     const dx = x - player.x, dy = y - player.y;
     const d = Math.hypot(dx, dy) || 1;
     if (d >= MIN_SPAWN_DIST_FROM_PLAYER) return { x, y };
     const scale = MIN_SPAWN_DIST_FROM_PLAYER / d;
     return { x: player.x + dx * scale, y: player.y + dy * scale };
+  }
+  /** Clamp spawn position to map bounds so enemies never spawn outside the board. */
+  function clampSpawnToMap(x, y){
+    if(typeof mapW !== "number" || typeof mapH !== "number") return { x, y };
+    return {
+      x: Math.max(SPAWN_MAP_MARGIN, Math.min(mapW - SPAWN_MAP_MARGIN, x)),
+      y: Math.max(SPAWN_MAP_MARGIN, Math.min(mapH - SPAWN_MAP_MARGIN, y))
+    };
   }
   function getRandomSpawnPoint(){
     const doorInset = 40 * PX;
@@ -3395,7 +3440,8 @@
 
   function spawnEnemy(isElite=false){
     let { x, y } = getRandomSpawnPoint();
-    const out = ensureSpawnMinDistFromPlayer(x, y);
+    let out = ensureSpawnMinDistFromPlayer(x, y);
+    out = clampSpawnToMap(out.x, out.y);
     x = out.x; y = out.y;
 
     const scale = getWaveScale();
@@ -3447,7 +3493,8 @@
   // waveIndex = floor(gameTime/20). Miniboss = 3× size, 5× HP/dmg of smallest mob. Boss = 6× size, 20× HP/dmg.
   function spawnBoss(isMiniboss=false, waveIndex=null){
     let { x, y } = getRandomSpawnPoint();
-    const out = ensureSpawnMinDistFromPlayer(x, y);
+    let out = ensureSpawnMinDistFromPlayer(x, y);
+    out = clampSpawnToMap(out.x, out.y);
     x = out.x; y = out.y;
 
     const w = typeof waveIndex === "number" && waveIndex >= 0 ? waveIndex : getWaveIndex();
@@ -3679,6 +3726,10 @@
 
     if(isLevel11 && !e.boss){
       level11Kills++;
+      if(level11Kills === LEVEL11_WELD_HINT_KILLS && level11StoryPhase === "clear"){
+        level11StoryPhase = "weldHint";
+        level11ShowDialogue([{ speaker: "commander", text: "The mice appear to be coming from the manholes. Weld them shut." }]);
+      }
       const withinGuaranteeWindow = level11Kills <= 10;
       const mustGuaranteeNow = withinGuaranteeWindow && !level11WeaponDropped && level11Kills === 10;
       if(mustGuaranteeNow){
@@ -3738,7 +3789,6 @@
           secondary,
           splatter
         });
-        showTutorial("blood_pool", "Blood pools can be sampled. Stand still on one to collect a sample.", e.x, e.y);
         // Small blood-splat burst when pool appears.
         for(let n=0;n<9;n++){
           const a = Math.random()*Math.PI*2;
@@ -3759,7 +3809,12 @@
 
     if(e.boss && !e.miniboss){
       bossKilled=true;
-      showTutorial("extraction", "You've killed the boss. Extraction is available (X). Extract before you are killed, or else you will lose all loot. (But… the longer you fight, the better the rewards.)", e.x, e.y);
+      if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11RedOverlay){
+        level11RedOverlay.phase = "deathAnim";
+        level11RedOverlay.t = 0;
+        level11RedOverlay.deathAnimDuration = 5;
+        level11RedOverlay.fadeDuration = 3;
+      }
       spawnLegendaryBurst(e.x,e.y,true);
       beep({freq: 180, dur:0.18, type:"sawtooth", gain:0.06, slide:0.55});
       beep({freq: 420, dur:0.14, type:"triangle", gain:0.05, slide:0.75});
@@ -5077,6 +5132,14 @@
     level11WeaponDropped = false;
     level11BossPhase = null;
     level11BossPhaseMs = 0;
+    level11StoryPhase = "clear";
+    level11StoryTimer = 0;
+    level11Dialogue = null;
+    level11RedAlert = null;
+    level11RedOverlay = null;
+    level11CameraPan = null;
+    level11CamTargetX = null;
+    level11CamTargetY = null;
 
     runTotalXp = 0;
     tokenBarProgress = 0;
@@ -5365,11 +5428,6 @@
     if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     running=true; paused=false; inCompare=false;
 
-    if(currentLevelConfig && currentLevelConfig.id === "1-1"){
-      paused = true;
-      showLevel11ControlsOverlay();
-    }
-
     const runTrack = 1 + Math.floor(Math.random() * 5);
     runMusic = new Audio(`assets/audio/${runTrack}.mp3`);
     runMusic.loop = true;
@@ -5401,13 +5459,60 @@
   const LEVEL11_MINIBOSS_DELAY_SEC = 30;
   const LEVEL11_WELD_DURATION_SEC = 3.0;
   const LEVEL11_WELD_RADIUS = 70; // world units before DPR multiplier applied when used
-  /** Radius around fountain center where player is safe: no zone aggro. Prevents instant agro on spawn. */
-  const FOUNTAIN_SAFE_RADIUS = Math.max(280 * PX, (BASE.bulletSpeed * BASE.bulletLife) * PX * 1.2);
+  /** Player must move this far (px) before cluster aggro can trigger. */
+  const LEVEL11_AGGRO_MOVE_BUFFER_PX = 60 * PX;
+
+  function level11ShowDialogue(lines){
+    level11Dialogue = { lines, lineIndex: 0, charIndex: 0, nextCharAt: 0, done: false, displayUntil: 0, lineDisplayUntil: 0 };
+  }
+  function level11UpdateDialogue(dt){
+    if(!level11Dialogue || level11Dialogue.done) return;
+    const d = level11Dialogue;
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    if(d.displayUntil > 0){
+      if(now >= d.displayUntil){ d.done = true; }
+      return;
+    }
+    if(d.nextCharAt === 0) d.nextCharAt = now;
+    while(d.lineIndex < d.lines.length){
+      const line = d.lines[d.lineIndex].text;
+      if(d.lineDisplayUntil > 0){
+        if(now < d.lineDisplayUntil) return;
+        d.lineDisplayUntil = 0;
+        d.charIndex = 0;
+        d.lineIndex++;
+        if(d.lineIndex >= d.lines.length){ d.done = true; return; }
+        d.nextCharAt = now + 200;
+        continue;
+      }
+      if(d.charIndex < line.length){
+        if(now >= d.nextCharAt){
+          d.charIndex++;
+          d.nextCharAt = now + LEVEL11_DIALOGUE_CHAR_MS;
+        }
+        return;
+      }
+      d.lineDisplayUntil = now + LEVEL11_DIALOGUE_DISPLAY_MS;
+      return;
+    }
+    d.done = true;
+  }
+  function level11GetDialogueVisibleText(){
+    if(!level11Dialogue || level11Dialogue.lines.length === 0) return null;
+    const d = level11Dialogue;
+    if(d.lineIndex >= d.lines.length)
+      return d.displayUntil > 0 ? { speaker: d.lines[d.lines.length - 1].speaker, text: d.lines[d.lines.length - 1].text } : null;
+    const line = d.lines[d.lineIndex];
+    if(d.lineDisplayUntil > 0) return { speaker: line.speaker, text: line.text };
+    return { speaker: line.speaker, text: line.text.slice(0, d.charIndex) };
+  }
+  function level11IsDialogueDone(){ return !level11Dialogue || level11Dialogue.done; }
 
   function setupLevel11Zones(){
     if(!level11Active || !manholes || !manholes.length) return;
     level11Zones = [];
     level11ZonesCleared = 0;
+    level11DistanceMoved = 0;
     level11Arrow = null;
     level11WeldingZoneId = null;
     level11WeldMs = 0;
@@ -5463,7 +5568,6 @@
       const x = zone.corpseX + Math.cos(ang) * r;
       const y = zone.corpseY + Math.sin(ang) * r;
 
-      // Reuse normal enemy creation but override position and mark as cluster-idle
       spawnEnemy(false);
       const e = enemies[enemies.length - 1];
       if(!e) continue;
@@ -5479,17 +5583,14 @@
   function updateLevel11Zones(dt, elapsed){
     if(!level11Active || !level11Zones.length) return;
 
-    const fountainCx = mapW / 2, fountainCy = mapH / 2;
-    const distToFountain = Math.hypot(player.x - fountainCx, player.y - fountainCy);
-    const inSafeZone = distToFountain < FOUNTAIN_SAFE_RADIUS;
-
     for(const zone of level11Zones){
       const m = manholes[zone.manholeIndex];
       if(!m) continue;
 
       if(!zone.activated){
-        if(inSafeZone) continue; // no zone activates while player is in fountain safe radius
-        // Check if player enters aggression zone around corpse
+        // Aggro only after player has moved 60px (gives time to orient)
+        if(level11DistanceMoved < LEVEL11_AGGRO_MOVE_BUFFER_PX) continue;
+        // Check if player is within aggression zone
         const dx = player.x - zone.corpseX;
         const dy = player.y - zone.corpseY;
         if(dx*dx + dy*dy <= zone.aggroR * zone.aggroR){
@@ -5503,7 +5604,6 @@
             }
           }
           showSimpleToast("Cluster sighted — clear the zone!");
-          showTutorial("manhole", "Manholes spawn enemies. Clear the zone and seal the manhole to stop the threat.", m.x, m.y);
         }
       }
 
@@ -5520,12 +5620,9 @@
             spawnEnemy(elite);
             const e = enemies[enemies.length - 1];
             if(e){
-              const angle = Math.random() * Math.PI * 2;
-              const dist = m.r + 22 * PX;
-              e.x = m.x + Math.cos(angle) * dist;
-              e.y = m.y + Math.sin(angle) * dist;
-              const pushed = ensureSpawnMinDistFromPlayer(e.x, e.y);
-              e.x = pushed.x; e.y = pushed.y;
+              // Spawn from the manhole center
+              e.x = m.x;
+              e.y = m.y;
               e.clusterZone = zone.id;
               e.clusterAggro = true;
             }
@@ -5544,7 +5641,6 @@
             boss.clusterZone = zone.id;
             boss.clusterAggro = true;
           }
-          showTutorial("miniboss", "A mini-boss has appeared! Defeat it, then seal the manhole.", m.x, m.y);
         }
       }
     }
@@ -5654,10 +5750,130 @@
         }
       }
 
-      // If this was the last manhole, start boss warning sequence
-      if(level11ZonesCleared === level11Zones.length && level11Zones.length > 0 && !level11BossPhase){
-        level11BossPhase = "warnDelay";
-        level11BossPhaseMs = 0;
+      // If this was the last manhole, start story dialogue (not boss yet)
+      if(level11ZonesCleared === level11Zones.length && level11Zones.length > 0 && (level11StoryPhase === "clear" || level11StoryPhase === "weldHint")){
+        level11StoryPhase = "welded";
+        level11ShowDialogue([
+          { speaker: "character", text: "Done. I've welded all six manholes. Hope it holds." },
+          { speaker: "commander", text: "Well done! Now extract and we'll debrief at base. (Push \"x\")" }
+        ]);
+      }
+    }
+  }
+
+  function level11DoorSpawnsAllowed(){
+    return level11StoryPhase === "bossSpawned";
+  }
+
+  const LEVEL11_RADAR_READ_DURATION = 2;   // Seconds after Commander's "radar" line before BOSS ALERT.
+  const LEVEL11_BOSS_ALERT_DURATION = 2;   // Seconds of BOSS ALERT + red before boss spawns.
+  const LEVEL11_CAM_PAN_DURATION = 1.5;
+  const LEVEL11_CAM_HOLD_DURATION = 2;
+
+  function updateLevel11Story(dt, elapsed){
+    if(!level11Active || !currentLevelConfig || currentLevelConfig.id !== "1-1") return;
+
+    level11UpdateDialogue(dt);
+
+    if(level11StoryPhase === "welded" && level11IsDialogueDone()){
+      level11StoryPhase = "extractReady";
+    }
+
+    // After malfunction dialogue: 2s reading time, then BOSS ALERT + red (no boss yet).
+    if(level11StoryPhase === "malfunction" && level11IsDialogueDone()){
+      level11StoryPhase = "radarRead";
+      level11StoryTimer = 0;
+    }
+    if(level11StoryPhase === "radarRead"){
+      level11StoryTimer += dt;
+      if(level11StoryTimer >= LEVEL11_RADAR_READ_DURATION){
+        level11StoryPhase = "bossAlert";
+        level11StoryTimer = 0;
+        level11RedAlert = { t: 0, duration: LEVEL11_BOSS_ALERT_DURATION };
+        level11RedOverlay = { phase: "full", t: 0 };
+        if(bossBanner){
+          bossBanner.textContent = "⚠️ BOSS ALERT! ⚠️";
+          bossBanner.classList.remove("show", "bossBlink"); void bossBanner.offsetWidth;
+          bossBanner.classList.add("show", "bossBlink");
+        }
+        if(typeof beep === "function") beep({ freq: 400, dur: 0.3, type: "sawtooth", gain: 0.15 });
+        if(typeof beep === "function") setTimeout(() => { beep({ freq: 350, dur: 0.25, type: "sawtooth", gain: 0.12 }); }, 200);
+        if(typeof beep === "function") setTimeout(() => { beep({ freq: 300, dur: 0.2, type: "sawtooth", gain: 0.1 }); }, 400);
+      }
+    }
+
+    // After 2s of BOSS ALERT + red: spawn boss, pause, camera to boss (BOSS ALERT keeps blinking).
+    if(level11StoryPhase === "bossAlert" && level11RedAlert){
+      level11RedAlert.t += dt;
+      if(level11RedAlert.t >= level11RedAlert.duration){
+        level11RedAlert = null;
+        if(level11RedOverlay) level11RedOverlay.bossSpawnAt = LEVEL11_BOSS_ALERT_DURATION;
+        level11StoryPhase = "bossPan";
+        const doorInset = 40 * PX;
+        const doors = [
+          [mapW / 2, doorInset],
+          [mapW / 2, mapH - doorInset],
+          [doorInset, mapH / 2],
+          [mapW - doorInset, mapH / 2]
+        ];
+        const doorIdx = Math.floor(Math.random() * doors.length);
+        const [bossX, bossY] = doors[doorIdx];
+        spawnBoss(false);
+        const mainBoss = enemies[enemies.length - 1];
+        if(mainBoss){ mainBoss.x = bossX; mainBoss.y = bossY; }
+        bossKilled = false;
+        bossApproachSound();
+        level11CameraPan = {
+          phase: "toBoss",
+          t: 0,
+          fromX: player.x,
+          fromY: player.y,
+          toX: bossX,
+          toY: bossY,
+          panDuration: LEVEL11_CAM_PAN_DURATION,
+          holdDuration: LEVEL11_CAM_HOLD_DURATION
+        };
+      }
+    }
+
+    if(level11CameraPan){
+      const pan = level11CameraPan;
+      pan.t += dt;
+      if(pan.phase === "toBoss"){
+        const p = Math.min(1, pan.t / pan.panDuration);
+        const ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        level11CamTargetX = pan.fromX + (pan.toX - pan.fromX) * ease;
+        level11CamTargetY = pan.fromY + (pan.toY - pan.fromY) * ease;
+        if(p >= 1){
+          pan.phase = "hold";
+          pan.t = 0;
+        }
+      } else if(pan.phase === "hold"){
+        level11CamTargetX = pan.toX;
+        level11CamTargetY = pan.toY;
+        if(pan.t >= pan.holdDuration){
+          pan.phase = "toPlayer";
+          pan.t = 0;
+          pan.fromX = pan.toX;
+          pan.fromY = pan.toY;
+          pan.toX = player.x;
+          pan.toY = player.y;
+          if(bossBanner){ bossBanner.classList.remove("bossBlink"); bossBanner.classList.remove("show"); }
+        }
+      } else if(pan.phase === "toPlayer"){
+        const p = Math.min(1, pan.t / pan.panDuration);
+        const ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        level11CamTargetX = pan.fromX + (pan.toX - pan.fromX) * ease;
+        level11CamTargetY = pan.fromY + (pan.toY - pan.fromY) * ease;
+        if(p >= 1){
+          level11CameraPan = null;
+          level11CamTargetX = null;
+          level11CamTargetY = null;
+          if(bossBanner) bossBanner.classList.remove("bossBlink");
+          level11StoryPhase = "bossSpawned";
+          level11BossPhase = "spawned";
+          level11Active = false;
+        }
       }
     }
   }
@@ -5666,6 +5882,7 @@
     if(!level11Active || !level11Zones.length) return;
     if(level11ZonesCleared < level11Zones.length) return;
     if(!level11BossPhase) return;
+    if(level11StoryPhase && level11StoryPhase !== "bossSpawned") return;
 
     level11BossPhaseMs += dt;
 
@@ -5684,11 +5901,8 @@
     if(level11BossPhase === "warned" && level11BossPhaseMs >= 5){
       level11BossPhase = "spawned";
       level11BossPhaseMs = 0;
-      // Spawn main boss and then hand control back to endless spawn system
       spawnBoss(false);
-      const mainBoss = enemies[enemies.length - 1];
-      if(mainBoss) showTutorial("boss", "The boss has appeared! Defeat it to enable extraction.", mainBoss.x, mainBoss.y);
-      level11Active = false; // re-enable global endless spawns and wave bosses
+      level11Active = false;
     }
   }
 
@@ -5722,13 +5936,38 @@
     if(atkTag){ const atkPerSec = 1 / Math.max(0.0001, player.atkRate); atkTag.textContent = `ATK ${atkPerSec.toFixed(2)}/s`; }
 
     if(hudQuestStatus){
-      const is11 = running && currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones && level11Zones.length > 0;
-      if(is11){
-        hudQuestStatus.textContent = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
-        hudQuestStatus.style.display = "";
+      if(running){
+        const is11 = currentLevelConfig && currentLevelConfig.id === "1-1" && level11Zones && level11Zones.length > 0;
+        if(is11){
+          let step = "";
+          let progress = "";
+          if(level11StoryPhase === "clear" || level11StoryPhase === "weldHint"){
+            step = level11StoryPhase === "weldHint" ? "Weld the manholes shut." : "Clear the mice.";
+            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+          } else if(level11StoryPhase === "extractReady" || level11StoryPhase === "malfunction"){
+            step = "Extract (Push \"x\")";
+          } else if(level11StoryPhase === "postBossExtractReady"){
+            step = "Extract! (x)";
+          } else if(level11StoryPhase === "welded"){
+            step = "Report to commander.";
+            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+          } else if(level11StoryPhase === "radarRead" || level11StoryPhase === "bossAlert"){
+            step = "Hold position.";
+          } else if(level11StoryPhase === "bossPan" || level11StoryPhase === "bossSpawned"){
+            step = "Defeat the boss.";
+          } else {
+            step = "Seal all manholes.";
+            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+          }
+          hudQuestStatus.innerHTML = progress ? `<div class="hudQuestStep">${step}</div><div class="hudQuestProgress">${progress}</div>` : `<div class="hudQuestStep">${step}</div>`;
+          hudQuestStatus.style.display = "";
+        } else {
+          hudQuestStatus.innerHTML = "";
+          hudQuestStatus.style.display = "";
+        }
       } else {
-        hudQuestStatus.style.display = "none";
-        hudQuestStatus.textContent = "";
+        hudQuestStatus.innerHTML = "";
+        hudQuestStatus.style.display = "";
       }
     }
   }
@@ -5794,6 +6033,37 @@
     // Level 1-1: update manhole zones (aggression, spawns, miniboss timers, welding)
     if(level11Active){
       updateLevel11Zones(dt, elapsed);
+      updateLevel11Story(dt, elapsed);
+    }
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11Dialogue && !level11Dialogue.done){
+      level11UpdateDialogue(dt);
+    }
+    // During boss intro camera pan: no player or enemy movement; only story/camera advance
+    if(level11CameraPan){
+      updateHUD(elapsed);
+      return;
+    }
+
+    // Level 1-1: red overlay advance (death anim 5s, then fade 3s, then post-boss dialogue)
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11RedOverlay){
+      const ro = level11RedOverlay;
+      ro.t += dt;
+      if(ro.phase === "deathAnim" && ro.deathAnimDuration != null && ro.t >= ro.deathAnimDuration){
+        ro.phase = "fade";
+        ro.t = 0;
+      }
+      if(ro.phase === "fade" && ro.fadeDuration != null && ro.t >= ro.fadeDuration){
+        level11RedOverlay = null;
+        level11StoryPhase = "postBossDialogue";
+        level11ShowDialogue([
+          { speaker: "commander", text: "Brilliant work! Now get out of there." },
+          { speaker: "character", text: "I found the error. Extracting now." }
+        ]);
+      }
+    }
+    if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11StoryPhase === "postBossDialogue" && level11IsDialogueDone()){
+      level11StoryPhase = "postBossExtractReady";
+      showSimpleToast("Extract! (x)");
     }
 
     // Extraction countdown: when X pressed, count down; at 0 and alive → liftoff
@@ -6059,7 +6329,9 @@
     }
 
     // spawning: endless = 20% more mobs per 20s (rate × 1.2^wave); mobs get 1.2^wave HP/speed/dmg
-    if(!level11Active){
+    // On 1-1 after all manholes welded, allow door spawns until boss sequence
+    const allowDoorSpawns = !level11Active || (currentLevelConfig && currentLevelConfig.id === "1-1" && typeof level11DoorSpawnsAllowed === "function" && level11DoorSpawnsAllowed());
+    if(allowDoorSpawns){
       if(ENDLESS_RUN || !roundEnd){
         if(ENDLESS_RUN || !TEST_SINGLE_MOB_MODE){
           if(ENDLESS_RUN){
@@ -6132,6 +6404,7 @@
       player.vy=iy*speed;
     }
     const margin = 24 * PX;
+    const prevX = player.x, prevY = player.y;
     player.x=clamp(player.x+player.vx*dt, margin, mapW-margin);
     player.y=clamp(player.y+player.vy*dt, margin, mapH-margin);
     let out = pushOutOfFountain(player.x, player.y, player.r);
@@ -6140,6 +6413,10 @@
     player.x = out.x; player.y = out.y;
     out = pushOutOfMallProps(player.x, player.y, player.r);
     player.x = out.x; player.y = out.y;
+    // Level 1-1: track distance moved so aggro only triggers after 60px
+    if(level11Active && typeof level11DistanceMoved === "number"){
+      level11DistanceMoved += Math.hypot(player.x - prevX, player.y - prevY);
+    }
     const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
     if (plSpeed > 0.5*PX) {
       const vy = player.vy || 0;
@@ -7023,8 +7300,10 @@
       return;
     }
 
-    const camOffsetX = W*0.5 - player.x;
-    const camOffsetY = H*0.5 - player.y;
+    const camCenterX = (level11CamTargetX != null) ? level11CamTargetX : player.x;
+    const camCenterY = (level11CamTargetY != null) ? level11CamTargetY : player.y;
+    const camOffsetX = W*0.5 - camCenterX;
+    const camOffsetY = H*0.5 - camCenterY;
 
     if(extractionLiftoff){
       const ign = extractionLiftoff.ignitionDuration || 0;
@@ -7142,6 +7421,99 @@
       ctx.shadowBlur = 20*PX;
       ctx.fillText("Extraction: " + sec, W/2, H*0.22);
       ctx.restore();
+    }
+
+    // Level 1-1: red emergency overlay (from bossAlert until post-boss fade ends)
+    if(level11RedOverlay){
+      let alpha = 0.5;
+      if(level11RedOverlay.phase === "fade" && level11RedOverlay.fadeDuration > 0){
+        alpha *= 1 - Math.min(1, level11RedOverlay.t / level11RedOverlay.fadeDuration);
+      }
+      if(alpha > 0){
+        ctx.save();
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.fillStyle = `rgba(90, 20, 15, ${alpha})`;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+      }
+    } else if(level11RedAlert && level11RedAlert.duration > 0){
+      const alpha = Math.min(0.55, 0.35 + (level11RedAlert.t / level11RedAlert.duration) * 0.25);
+      ctx.save();
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.fillStyle = `rgba(90, 20, 15, ${alpha})`;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+
+    // Level 1-1: dialogue bubble (typewriter) + speaker portrait to the left
+    if(level11Dialogue && !level11Dialogue.done){
+      const vis = level11GetDialogueVisibleText();
+      if(vis){
+        ctx.save();
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        const pad = 28 * PX;
+        const portraitW = LEVEL11_DIALOGUE_PORTRAIT_WIDTH;
+        const fontSize = 18;
+        const lineH = Math.floor(fontSize * 1.7);
+        const bubbleX = pad + portraitW + 8;
+        const bubbleInnerW = W - bubbleX - pad - 32;
+        const maxCharsPerLine = Math.max(10, Math.floor(bubbleInnerW / (fontSize * 0.6)));
+        const lines = [];
+        let rest = vis.text;
+        while(rest.length > 0){
+          if(rest.length <= maxCharsPerLine){ lines.push(rest); break; }
+          const chunk = rest.slice(0, maxCharsPerLine);
+          const lastSpace = chunk.lastIndexOf(" ");
+          const cut = lastSpace > maxCharsPerLine * 0.5 ? lastSpace + 1 : maxCharsPerLine;
+          lines.push(rest.slice(0, cut).trim());
+          rest = rest.slice(cut).trim();
+        }
+        const bubbleH = pad * 2 + 24 + lines.length * lineH;
+        const y = H - bubbleH - 50;
+        const portraitX = pad;
+
+        // Portrait area (left of bubble). Commander: Commander_Astra_Speak.png; character: Main_Character_Speak.png (assets/graphics).
+        const isCommander = vis.speaker === "commander";
+        const portraitImg = dialoguePortraits[isCommander ? "commander" : "character"];
+        roundRect(portraitX, y, portraitW, bubbleH, 12);
+        ctx.fillStyle = isCommander ? "rgba(40, 50, 80, 0.92)" : "rgba(60, 50, 40, 0.92)";
+        ctx.fill();
+        ctx.strokeStyle = isCommander ? "rgba(120, 160, 220, 0.6)" : "rgba(180, 140, 100, 0.6)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        if(portraitImg && portraitImg.complete && portraitImg.naturalWidth > 0){
+          ctx.save();
+          ctx.beginPath();
+          roundRect(portraitX + 4, y + 4, portraitW - 8, bubbleH - 8, 8);
+          ctx.clip();
+          ctx.drawImage(portraitImg, portraitX + 4, y + 4, portraitW - 8, bubbleH - 8);
+          ctx.restore();
+        } else {
+          ctx.font = `bold ${fontSize - 2}px ${LEVEL11_DIALOGUE_FONT}`;
+          ctx.fillStyle = isCommander ? "rgba(160, 200, 255, 0.9)" : "rgba(220, 200, 170, 0.9)";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(isCommander ? "Astra" : "You", portraitX + portraitW / 2, y + bubbleH / 2);
+        }
+
+        // Speech bubble
+        ctx.fillStyle = "rgba(20, 18, 25, 0.94)";
+        ctx.strokeStyle = isCommander ? "rgba(120, 160, 220, 0.75)" : "rgba(180, 140, 100, 0.75)";
+        ctx.lineWidth = 3;
+        roundRect(bubbleX, y, W - bubbleX - pad, bubbleH, 14);
+        ctx.fill();
+        ctx.stroke();
+        ctx.font = `bold ${fontSize}px ${LEVEL11_DIALOGUE_FONT}`;
+        ctx.fillStyle = isCommander ? "rgba(160, 200, 255, 0.95)" : "rgba(220, 200, 170, 0.95)";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        const label = isCommander ? "Commander" : "You";
+        ctx.fillText(label, bubbleX + 16, y + 14);
+        ctx.font = `${fontSize}px ${LEVEL11_DIALOGUE_FONT}`;
+        ctx.fillStyle = "rgba(234, 242, 255, 0.92)";
+        lines.forEach((line, i) => { ctx.fillText(line, bubbleX + 16, y + 44 + i * lineH); });
+        ctx.restore();
+      }
     }
 
     if(victoryPhase){

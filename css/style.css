@@ -73,6 +73,8 @@
       -webkit-backdrop-filter: blur(10px);
     }
     #hudTL{position:absolute; left:10px; top:10px; width:min(330px, calc(100% - 20px)); padding:10px;}
+    .hudQuestStep{font-weight:600; margin-bottom:2px;}
+    .hudQuestProgress{font-size:11px; opacity:0.9;}
     #hudTR{position:absolute; right:10px; top:10px; padding:8px 10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;}
     #hudBR{position:absolute; right:10px; bottom:10px; width:min(360px, calc(100% - 20px)); padding:10px;}
 
@@ -1098,9 +1100,12 @@
       letter-spacing:1px;
       text-transform:uppercase;
     }
-    #bossBanner.show{display:block; animation: bossIn .25s ease-out, bossOut 1.6s ease-in forwards;}
+    #bossBanner.show{display:block; animation: bossIn .25s ease-out forwards;}
+    #bossBanner.show:not(.bossBlink){ animation: bossIn .25s ease-out, bossOut 1.6s ease-in 0.25s forwards; }
+    #bossBanner.show.bossBlink{ animation: bossIn .25s ease-out, bossBlinkPulse 0.55s ease-in-out 0.25s infinite; }
     @keyframes bossIn{ from{transform:translateX(-50%) translateY(-10px); opacity:0} to{transform:translateX(-50%) translateY(0); opacity:1} }
     @keyframes bossOut{ 0%,70%{opacity:1} 100%{opacity:0; transform:translateX(-50%) translateY(-10px)} }
+    @keyframes bossBlinkPulse{ 0%,100%{opacity:1} 50%{opacity:0.35} }
 
     /* Hint */
     #hint{
