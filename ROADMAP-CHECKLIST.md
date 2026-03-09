@@ -19,7 +19,7 @@
 - [ ] **Perk: Anti Coagulant** – upgrade-perk som senker blodets koaguleringshastighet, slik at man får bedre tid på seg til å samle «friskt» blod (poeng legges ved oppgradering)
 - [ ] **Affixes: beholde/fjerne/nye** – bli enige om hvilke affixes vi beholder, fjerner og legger til
 - [ ] **Trophies** – sjelden drop, samles i «Trophy room»
-- [ ] **Brett-grafikk** – bygge grafikken på brettet vi spiller på
+- [x] **Brett-grafikk** – bygge grafikken på brettet vi spiller på (v1.006.0: Mall-gulv, vegger, avløp/drains)
 - [ ] **Kister med loot** – spawne kister som inneholder loot
 - [ ] **Endless rounds** – stadig vanskeligere til helt umulige, bedre loot og affix-sjanser
 - [ ] **Våpen med slots for Specials** – våpen som dropper med slots; Specials = add-ons (chain lightning, explode, heat seeking osv.) med spennende effekter

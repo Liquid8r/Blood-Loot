@@ -850,6 +850,7 @@
   let level11DistanceMoved = 0;   // total distance moved on 1-1; aggro allowed only after 60px
   // Level 1-1 story: "clear" | "weldHint" | "welded" | "extractReady" | "malfunction" | "radarRead" | "bossAlert" | "bossPan" | "bossSpawned" | "postBossExtractReady"
   let level11StoryPhase = "clear";
+  let level11LastQuestStep = null;
   let level11StoryTimer = 0;
   let level11Dialogue = null;     // { lines: [{ text, speaker }], lineIndex, charIndex, nextCharAt } typewriter
   let level11RedAlert = null;     // legacy: used only for 2s bossAlert timer before spawn
@@ -869,6 +870,12 @@
   };
   dialoguePortraits.commander.src = "assets/graphics/Commander_Astra_Speak.png";
   dialoguePortraits.character.src = "assets/graphics/Main_Character_Speak.png";
+
+  // Optional v1.006.0 mall assets (if present in assets/graphics/ – canvas fallback otherwise)
+  const mallFloorTileImg = new Image();
+  mallFloorTileImg.src = "assets/graphics/mall_floor_tile.png";
+  const mallDrainGrateImg = new Image();
+  mallDrainGrateImg.src = "assets/graphics/mall_drain_grate.png";
 
   // Skittering Mouse sprites (2-frame animation: move1, move2)
   const skMouseSprites = {
@@ -1567,7 +1574,7 @@
         <p>Intel suggests hostile activity in the old sewer network beneath the city. Your objective: infiltrate, gather samples, and extract.</p>
         <p><strong>FIELD NOTES:</strong></p>
         <p>The blood... it's thicker than normal. Viscosity readings are off the charts. Whatever these creatures are, they're not entirely organic anymore.</p>
-        <p>The sewers are crawling with infected civilians. They seem to congregate around certain areas — manholes that lead deeper underground.</p>
+        <p>The sewers are crawling with infected civilians. They seem to congregate around certain areas — floor drains that lead deeper underground.</p>
         <p>Recommend further analysis at the Chemistry Lab.</p>
       `
     },
@@ -1694,7 +1701,7 @@
       summary: "Powerful creature guarding key locations.",
       content: `
         <p><strong>CLASSIFICATION:</strong> Mini-Boss Hostile</p>
-        <p><strong>BEHAVIOR:</strong> Territorial. Guards specific locations, particularly manholes and tunnel entrances.</p>
+        <p><strong>BEHAVIOR:</strong> Territorial. Guards specific locations, particularly drains and tunnel entrances.</p>
         <p><strong>WEAKNESSES:</strong> Larger hitbox, predictable patrol patterns.</p>
         <p><strong>NOTES:</strong> These creatures seem to have a purpose beyond simple aggression. They guard access points, suggesting some form of hive intelligence directing them.</p>
         <p>Eliminating them is often necessary to seal entry points and prevent reinforcements.</p>
@@ -3705,7 +3712,7 @@
       minibossKills++;
       unlockIntel("bestiary", "miniboss_enemy");
       if(isLevel11){
-        showSimpleToast("Seal the Manhole");
+        showSimpleToast("Seal the Drain");
         const zone = level11Zones.find(z => z.id === e.clusterZone);
         if(zone){
           const m = manholes[zone.manholeIndex];
@@ -3728,7 +3735,7 @@
       level11Kills++;
       if(level11Kills === LEVEL11_WELD_HINT_KILLS && level11StoryPhase === "clear"){
         level11StoryPhase = "weldHint";
-        level11ShowDialogue([{ speaker: "commander", text: "The mice appear to be coming from the manholes. Weld them shut." }]);
+        level11ShowDialogue([{ speaker: "commander", text: "The mice appear to be coming from the drains. Weld them shut." }]);
       }
       const withinGuaranteeWindow = level11Kills <= 10;
       const mustGuaranteeNow = withinGuaranteeWindow && !level11WeaponDropped && level11Kills === 10;
@@ -5720,7 +5727,7 @@
       }
 
       // Notification
-      showSimpleToast("Manhole Sealed");
+      showSimpleToast("Drain Sealed");
 
       // Point towards nearest next zone (unsealed manhole) for a few seconds
       let next = null;
@@ -5754,7 +5761,7 @@
       if(level11ZonesCleared === level11Zones.length && level11Zones.length > 0 && (level11StoryPhase === "clear" || level11StoryPhase === "weldHint")){
         level11StoryPhase = "welded";
         level11ShowDialogue([
-          { speaker: "character", text: "Done. I've welded all six manholes. Hope it holds." },
+          { speaker: "character", text: "Done. I've welded all six drains. Hope it holds." },
           { speaker: "commander", text: "Well done! Now extract and we'll debrief at base. (Push \"x\")" }
         ]);
       }
@@ -5941,33 +5948,59 @@
         if(is11){
           let step = "";
           let progress = "";
-          if(level11StoryPhase === "clear" || level11StoryPhase === "weldHint"){
-            step = level11StoryPhase === "weldHint" ? "Weld the manholes shut." : "Clear the mice.";
-            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+          if(level11StoryPhase === "clear"){
+            step = "Clear the mice.";
+          } else if(level11StoryPhase === "weldHint"){
+            step = "Weld the drains shut.";
+            progress = `Drains sealed: ${level11ZonesCleared}/${level11Zones.length}`;
           } else if(level11StoryPhase === "extractReady" || level11StoryPhase === "malfunction"){
             step = "Extract (Push \"x\")";
           } else if(level11StoryPhase === "postBossExtractReady"){
             step = "Extract! (x)";
           } else if(level11StoryPhase === "welded"){
             step = "Report to commander.";
-            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+            progress = `Drains sealed: ${level11ZonesCleared}/${level11Zones.length}`;
           } else if(level11StoryPhase === "radarRead" || level11StoryPhase === "bossAlert"){
             step = "Hold position.";
           } else if(level11StoryPhase === "bossPan" || level11StoryPhase === "bossSpawned"){
             step = "Defeat the boss.";
           } else {
-            step = "Seal all manholes.";
-            progress = `Manholes sealed: ${level11ZonesCleared}/${level11Zones.length}`;
+            step = "Seal all drains.";
+            progress = `Drains sealed: ${level11ZonesCleared}/${level11Zones.length}`;
           }
-          hudQuestStatus.innerHTML = progress ? `<div class="hudQuestStep">${step}</div><div class="hudQuestProgress">${progress}</div>` : `<div class="hudQuestStep">${step}</div>`;
+          const html = progress ? `<div class="hudQuestStep">${step}</div><div class="hudQuestProgress">${progress}</div>` : `<div class="hudQuestStep">${step}</div>`;
+          if (step !== level11LastQuestStep) {
+            if (level11LastQuestStep != null && level11LastQuestStep !== "") {
+              if (sfxVol > 0) beep({ freq: 660, dur: 0.12, type: "triangle", gain: 0.06 });
+              hudQuestStatus.classList.add("hudQuestCompletedFlash");
+              const el = hudQuestStatus;
+              setTimeout(() => {
+                el.innerHTML = html;
+                el.classList.remove("hudQuestCompletedFlash");
+                el.classList.add("hudQuestNew");
+                if (sfxVol > 0) beep({ freq: 880, dur: 0.06, type: "sine", gain: 0.05 });
+                setTimeout(() => el.classList.remove("hudQuestNew"), 2000);
+              }, 350);
+            } else {
+              hudQuestStatus.innerHTML = html;
+              hudQuestStatus.classList.add("hudQuestNew");
+              if (sfxVol > 0) beep({ freq: 880, dur: 0.06, type: "sine", gain: 0.05 });
+              setTimeout(() => hudQuestStatus.classList.remove("hudQuestNew"), 2000);
+            }
+            level11LastQuestStep = step;
+          } else {
+            hudQuestStatus.innerHTML = html;
+          }
           hudQuestStatus.style.display = "";
         } else {
           hudQuestStatus.innerHTML = "";
           hudQuestStatus.style.display = "";
+          level11LastQuestStep = null;
         }
       } else {
         hudQuestStatus.innerHTML = "";
         hudQuestStatus.style.display = "";
+        level11LastQuestStep = null;
       }
     }
   }
@@ -6765,54 +6798,104 @@
     ctx.closePath();
   }
 
-  // Mall 1st floor: tiled floor with variation, grout, subtle gradients, rare cracks
+  // Mall 1st floor: procedural tiles with variation, walkway glow, subtle wear (v1.006.0)
   function drawMallFloorPlaceholder(){
     const tile = 48 * PX;
-    const gap = Math.max(1, 1 * PX);
-    const w = Math.ceil(mapW / tile) + 1;
-    const h = Math.ceil(mapH / tile) + 1;
+    const gap = Math.max(1, 1.5 * PX);
+    const cols = Math.ceil(mapW / tile) + 1;
+    const rows = Math.ceil(mapH / tile) + 1;
+    const fcX = mapW / 2, fcY = mapH / 2;
+    const walkwayR = tile * 6.5;
     ctx.save();
-    // Deterministic hash for (i,j) – same run = same look
     function tileHash(i, j){ let v = (i * 31 + j) * 2654435761; return (v >>> 0) % 100000; }
-    const shades = ["#4a4439", "#423b32", "#3d362e", "#353028"];
-    // Base = grout (dark lines between tiles)
-    ctx.fillStyle = "#2a2520";
+    const grout = "#5f5a54";
+    ctx.fillStyle = grout;
     ctx.fillRect(0, 0, mapW, mapH);
-    for (let i = 0; i < w; i++) {
-      for (let j = 0; j < h; j++) {
+    const baseShades = ["#c8c3b8", "#beb9ae", "#b4afa4", "#aaa59a"];
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
         const x = i * tile + gap;
         const y = j * tile + gap;
         const size = tile - gap * 2;
+        const tx = x + size / 2, ty = y + size / 2;
         const h = tileHash(i, j);
-        const baseColor = shades[h % shades.length];
-        const darkColor = shades[(h + 2) % shades.length];
-        const g = ctx.createRadialGradient(x + size/2, y + size/2, 0, x + size/2, y + size/2, size * 0.6);
+        const distFromCenter = Math.hypot(tx - fcX, ty - fcY);
+        const walkwayFrac = Math.max(0, 1 - (distFromCenter - walkwayR * 0.6) / (walkwayR * 0.8));
+        const shadeIdx = (h + i + j) % baseShades.length;
+        let baseColor = baseShades[shadeIdx];
+        const vary = 0.92 + (h % 17) / 85;
+        baseColor = baseColor.replace(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i, (_, r, g, b) => {
+          const vr = Math.min(255, Math.round(parseInt(r, 16) * vary));
+          const vg = Math.min(255, Math.round(parseInt(g, 16) * vary));
+          const vb = Math.min(255, Math.round(parseInt(b, 16) * vary));
+          return "#" + vr.toString(16).padStart(2,"0") + vg.toString(16).padStart(2,"0") + vb.toString(16).padStart(2,"0");
+        });
+        const darkColor = baseShades[(shadeIdx + 2) % baseShades.length];
+        const g = ctx.createRadialGradient(tx, ty, 0, tx, ty, size * 0.7);
         g.addColorStop(0, baseColor);
-        g.addColorStop(1, darkColor);
+        g.addColorStop(0.6, darkColor);
+        g.addColorStop(1, "#8e8980");
         ctx.fillStyle = g;
         ctx.fillRect(x, y, size, size);
-        // Rare cracks (~8% of tiles), spread so similar ones are far apart
-        if ((i * 7 + j * 11) % 13 === 2) {
-          ctx.strokeStyle = "rgba(22,20,16,0.75)";
-          ctx.lineWidth = 1.2 * PX;
-          const cx = x + size/2, cy = y + size/2;
-          const angle = (h % 360) * Math.PI / 180;
-          const len = size * (0.12 + (h % 25) / 150);
-          ctx.beginPath();
-          ctx.moveTo(cx - Math.cos(angle) * len, cy - Math.sin(angle) * len);
-          ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
-          ctx.stroke();
-          if (h % 3 === 0) {
-            const a2 = angle + 0.7;
-            const len2 = size * 0.1;
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(cx + Math.cos(a2) * len2, cy + Math.sin(a2) * len2);
-            ctx.stroke();
-          }
+        const isWorn = (i * 7 + j * 11) % 23 === 5;
+        if (isWorn) {
+          ctx.fillStyle = "rgba(90,85,78,0.14)";
+          ctx.fillRect(x, y, size, size);
+        }
+        const highlight = ctx.createLinearGradient(x, y, x + size, y + size);
+        highlight.addColorStop(0, "rgba(255,252,248,0.1)");
+        highlight.addColorStop(0.5, "rgba(255,255,255,0)");
+        highlight.addColorStop(1, "rgba(200,198,195,0.05)");
+        ctx.fillStyle = highlight;
+        ctx.fillRect(x, y, size, size);
+        if (walkwayFrac > 0) {
+          ctx.fillStyle = "rgba(255,252,248," + (0.04 * walkwayFrac) + ")";
+          ctx.fillRect(x, y, size, size);
         }
       }
     }
+    // Mall walls: baseboard + wall strip along all four edges (indoor feel)
+    const wallH = 72 * PX;
+    const baseH = 12 * PX;
+    const wallFill = "#8c8780";
+    const wallDark = "#6e6a64";
+    const baseFill = "#5a5652";
+    // North
+    ctx.fillStyle = baseFill;
+    ctx.fillRect(0, 0, mapW, baseH);
+    const northG = ctx.createLinearGradient(0, 0, 0, wallH);
+    northG.addColorStop(0, wallDark);
+    northG.addColorStop(0.4, wallFill);
+    northG.addColorStop(1, "#7a756e");
+    ctx.fillStyle = northG;
+    ctx.fillRect(0, baseH, mapW, wallH - baseH);
+    // South
+    ctx.fillStyle = baseFill;
+    ctx.fillRect(0, mapH - baseH, mapW, baseH);
+    const southG = ctx.createLinearGradient(0, mapH - wallH, 0, mapH);
+    southG.addColorStop(0, "#7a756e");
+    southG.addColorStop(0.6, wallFill);
+    southG.addColorStop(1, wallDark);
+    ctx.fillStyle = southG;
+    ctx.fillRect(0, mapH - wallH, mapW, wallH - baseH);
+    // West
+    ctx.fillStyle = baseFill;
+    ctx.fillRect(0, 0, baseH, mapH);
+    const westG = ctx.createLinearGradient(0, 0, wallH, 0);
+    westG.addColorStop(0, wallDark);
+    westG.addColorStop(0.4, wallFill);
+    westG.addColorStop(1, "#7a756e");
+    ctx.fillStyle = westG;
+    ctx.fillRect(baseH, 0, wallH - baseH, mapH);
+    // East
+    ctx.fillStyle = baseFill;
+    ctx.fillRect(mapW - baseH, 0, baseH, mapH);
+    const eastG = ctx.createLinearGradient(mapW - wallH, 0, mapW, 0);
+    eastG.addColorStop(0, "#7a756e");
+    eastG.addColorStop(0.6, wallFill);
+    eastG.addColorStop(1, wallDark);
+    ctx.fillStyle = eastG;
+    ctx.fillRect(mapW - wallH, 0, wallH - baseH, mapH);
     ctx.restore();
   }
 
@@ -7192,32 +7275,61 @@
     ctx.restore();
   }
 
-  function drawManholes(){
+  /** Draw mall floor drains as one tile each: snap to floor grid, same size as a floor tile. */
+  function drawDrains(){
+    const tile = 48 * PX;
+    const gap = Math.max(1, 1.5 * PX);
+    const size = tile - gap * 2;
     ctx.save();
+    const useDrainImg = mallDrainGrateImg.complete && mallDrainGrateImg.naturalWidth > 0;
     for (const m of manholes) {
-      const r = m.r;
       const isClosed = !!m.closed;
-      // Outer ring
-      ctx.fillStyle = isClosed ? "#254026" : "#3a3632";
-      ctx.strokeStyle = isClosed ? "#5e9b60" : "#5c5750";
-      ctx.lineWidth = 3 * PX;
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      const ti = Math.round(m.x / tile);
+      const tj = Math.round(m.y / tile);
+      const drawX = ti * tile + gap;
+      const drawY = tj * tile + gap;
+      roundRect(drawX, drawY, size, size, 3 * PX);
+      ctx.fillStyle = isClosed ? "#1e2a20" : "#2a2c2e";
       ctx.fill();
-      ctx.stroke();
-      // Inner disc
-      ctx.fillStyle = isClosed ? "#1b2f1d" : "#2a2824";
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, r * 0.88, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = isClosed ? "#6ecf73" : "#4a4540";
+      ctx.strokeStyle = isClosed ? "#3d5a40" : "#4a4c4e";
       ctx.lineWidth = 1.5 * PX;
       ctx.stroke();
-      // Center plug
-      ctx.fillStyle = isClosed ? "#142015" : "#1e1c1a";
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, r * 0.5, 0, Math.PI * 2);
+      const pad = 4 * PX;
+      const innerX = drawX + pad, innerY = drawY + pad, innerW = size - pad * 2, innerH = size - pad * 2;
+      roundRect(innerX, innerY, innerW, innerH, 2 * PX);
+      ctx.fillStyle = isClosed ? "#243828" : "#343638";
       ctx.fill();
+      ctx.strokeStyle = isClosed ? "#4a6b4d" : "#505355";
+      ctx.lineWidth = 1 * PX;
+      ctx.stroke();
+      if (isClosed) {
+        const plugPad = 8 * PX;
+        roundRect(drawX + plugPad, drawY + plugPad, size - plugPad * 2, size - plugPad * 2, 2 * PX);
+        ctx.fillStyle = "#152015";
+        ctx.fill();
+        ctx.strokeStyle = "#4a6b4d";
+        ctx.lineWidth = 1.5 * PX;
+        ctx.stroke();
+      } else if (useDrainImg) {
+        ctx.drawImage(mallDrainGrateImg, 0, 0, mallDrainGrateImg.naturalWidth, mallDrainGrateImg.naturalHeight, innerX, innerY, innerW, innerH);
+      } else {
+        const step = Math.max(4, innerW / 8);
+        ctx.strokeStyle = "#4a4d52";
+        ctx.lineWidth = 1.2 * PX;
+        ctx.lineCap = "round";
+        for (let xx = innerX; xx <= innerX + innerW; xx += step) {
+          ctx.beginPath();
+          ctx.moveTo(xx, innerY);
+          ctx.lineTo(xx, innerY + innerH);
+          ctx.stroke();
+        }
+        for (let yy = innerY; yy <= innerY + innerH; yy += step) {
+          ctx.beginPath();
+          ctx.moveTo(innerX, yy);
+          ctx.lineTo(innerX + innerW, yy);
+          ctx.stroke();
+        }
+      }
     }
     ctx.restore();
   }
@@ -7320,7 +7432,7 @@
       if (mapW > 0 && mapH > 0) {
         drawMallFloorPlaceholder();
         drawFountain();
-        drawManholes();
+        drawDrains();
         drawMallProps();
         drawDoors();
         drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, worldScale);
@@ -7384,7 +7496,7 @@
       if (mapW > 0 && mapH > 0) {
         drawMallFloorPlaceholder();
         drawFountain();
-        drawManholes();
+        drawDrains();
         drawMallProps();
         drawDoors();
         drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, 1);
