@@ -28,6 +28,7 @@ Dette prosjektet er basert på **Affix Loot v1.002** (fallback: åpne mappen «A
 - **Død:** 10 % av blodet i runnet bringes tilbake som «damaged samples». **Ingen loot tas med** – unntatt: alt item du hadde **på deg** (equipped) blir gjort om til **skrap av samme tier** som itemet. Skrap lagres og brukes på basen (verksted/lab).
 - **Loot til basen:** Juster drop rate, rarity, item level slik at det balanserer «ta med» vs «gamble videre».
 - **Biom:** 1-1, 1-2, 1-3 = biom 1; samle nok blod for å summone biom-boss; etter seier åpnes biom 2 (2-1, 2-2, 2-3). Top-down, fritt brett, biom-spesifikk bakgrunn.
+- **Armory mod slots (økonomi):** **Scrap** brukes til å **åpne** mod-plasser på våpen/gear (per item). **Blod** (lagret ml) brukes til å **sette egenskaper** i allerede åpne, tomme plasser. Scientist *Sanguine Mod Channels* begrenser **hvor mange** plasser du *kan* åpne totalt (sjeldenhets-cap gjelder fortsatt per item). Grade-forge (**G**) bruker lab-blod (Obsidian/Crimson), ikke scrap.
 
 ---
 

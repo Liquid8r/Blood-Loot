@@ -1,6 +1,6 @@
 {
   "name": "affix-loot",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "engines": {
     "node": ">=18"
@@ -10,5 +10,8 @@
   },
   "dependencies": {
     "serve": "^14.2.4"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
   }
 }

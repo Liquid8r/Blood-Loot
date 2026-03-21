@@ -86,7 +86,7 @@
   if(inventoryOverlayEl) inventoryOverlayEl.oncontextmenu = (e) => e.preventDefault();
 
   // ========= Version (bump thousandths for each release, e.g. 1.001, 1.002) =========
-  const GAME_VERSION = "1.005.2";
+  const GAME_VERSION = "1.005.3";
   const gameVersionEl = document.getElementById("gameVersion");
   if(gameVersionEl) gameVersionEl.textContent = `v${GAME_VERSION}`;
   document.title = `Affix Loot — v${GAME_VERSION}`;
@@ -222,6 +222,12 @@
     beep({freq: 1760, dur:0.16, type:"sine", gain:0.05, slide:0.65});
     beep({noise:true, dur:0.05, gain:0.02});
   }
+  function powerUpMythic(){
+    beep({freq: 660, dur: 0.08, type: "sine", gain: 0.065 });
+    beep({freq: 990, dur: 0.11, type: "triangle", gain: 0.06, slide: 0.88 });
+    beep({freq: 1320, dur: 0.14, type: "sine", gain: 0.055, slide: 0.72 });
+    beep({freq: 1760, dur: 0.12, type: "triangle", gain: 0.05, slide: 0.65 });
+  }
   function bossApproachSound(){
     beep({freq: 220, dur:0.18, type:"sawtooth", gain:0.06, slide:0.65});
     beep({freq: 440, dur:0.20, type:"triangle", gain:0.05, slide:1.15});
@@ -244,9 +250,33 @@
     uncommon: {name:"Uncommon",  color:cssVar("--uncommon"),  w:0.24},
     rare:     {name:"Rare",      color:cssVar("--rare"),      w:0.08},
     legendary:{name:"Legendary", color:cssVar("--legendary"), w:0.01},
+    mythic:   {name:"Mythic",    color:cssVar("--mythic"),    w:0},
     set:      {name:"Set",       color:cssVar("--set"),       w:0},
   };
-  function rarityLabel(r){ return RAR[r].name; }
+  /** Canvas loot name fill: same hex as css/style.css :root (full opacity). */
+  const RARITY_LOOT_NAME_HEX = {
+    common: "#9AA3AE",
+    uncommon: "#4EA6FF",
+    rare: "#FFD24D",
+    legendary: "#FF8A2A",
+    mythic: "#2EE6E0",
+    set: "#3DD077",
+  };
+  function rarityLabel(r){ return (RAR[r] && RAR[r].name) ? RAR[r].name : String(r || "?"); }
+
+  const GRADE_SYSTEM_MIGRATION_KEY = "affixloot_grade_system_v1";
+  const GRADE_BANDS = {
+    common: { min: 10, max: 100 },
+    uncommon: { min: 40, max: 200 },
+    rare: { min: 80, max: 350 },
+    legendary: { min: 150, max: 600 },
+    mythic: { min: 800, max: 1000 },
+    set: { min: 200, max: 1000 },
+  };
+  function getGradeBand(rar){ return GRADE_BANDS[rar] || GRADE_BANDS.common; }
+  function rollGradeForRarity(rar){ const b = getGradeBand(rar); return randi(b.min, b.max); }
+  function getGradeCapForRarity(rar){ return getGradeBand(rar).max; }
+  function maxBloodUpgradesForGrade(grade){ return Math.max(0, Math.floor((grade | 0) / 10)); }
 
   // ========= Tuning =========
   const BASE = {
@@ -261,6 +291,11 @@
     baseAtk: 0.82,     // attack interval (s); higher = slower fire
     bulletSpeed: 540,
     bulletLife: 0.95,
+    /** Melee: extra reach beyond player.r (design px), sector half-angle (rad), swipe duration s */
+    bladeReach: 50,
+    axeReach: 34,
+    bladeHalfArc: 0.52,
+    bladeSwipeDuration: 0.12,
 
     xpNeed: 20,
 
@@ -280,7 +315,7 @@
   /** When true, each new run counts as first-time: tutorial "seen" state is cleared at run start so tutorials show every run. */
   const DEV_TUTORIAL_EVERY_RUN = true;
   /** When true, start each run with a legendary weapon equipped (for testing). Disabled: use dev gift on 1-1 instead. */
-  const DEV_GIVE_LEGENDARY_WEAPON = true;
+  const DEV_GIVE_LEGENDARY_WEAPON = false;
   /** When set, override token count to this value for testing (e.g. 100). Set to 0 or remove to use normal progression. */
   const DEV_GIVE_TOKENS = 100;
   // Endless run: no round end from time; boss every 60s; extract when player chooses.
@@ -311,7 +346,7 @@
   const BLOOD_RESEARCH_ML = { red: 200, blue: 250, green: 300, purple: 400 };
   const BLOOD_POTION_ML = { speed: 150, dmg: 150, toxic: 150, speedAndDmg: 200 };
   const POTION_EFFECT_PCT = { speed: 12, dmg: 15, toxic: 10, speedAndDmg: 8 };
-  const PROGRESSION_KEYS = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills","affixloot_blood_research","affixloot_potion_queue","affixloot_stash","affixloot_base_scrap","affixloot_equipped","affixloot_inventory","affixloot_intel","affixloot_achievements"];
+  const PROGRESSION_KEYS = ["affixloot_tokens","affixloot_skill_levels","affixloot_skill_tree_purchased",QUEST_STORAGE_KEY,"affixloot_base_blood_ml","affixloot_unlocked_levels","affixloot_best_time","affixloot_best_kills","affixloot_blood_research","affixloot_potion_queue","affixloot_stash","affixloot_base_scrap","affixloot_equipped","affixloot_inventory","affixloot_intel","affixloot_achievements","affixloot_meta_level","affixloot_grade_system_v1","affixloot_scrap_synergy_discovered","affixloot_theo_base_tips"];
   const QUEST_COOLDOWN_MS = 5 * 60 * 1000;
   const QUEST_DEFS = [
     {
@@ -430,15 +465,15 @@
       branched: true,
       nodes: [
         { id: "sci_base", name: "", cost: 0, maxLevel: 1, branch: "base", branchIndex: 0 },
-        { id: "sci_left_0", name: "", cost: 0, maxLevel: 1, requires: ["sci_base"], branch: "left", branchIndex: 0 },
-        { id: "sci_left_1", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_0"], branch: "left", branchIndex: 1 },
-        { id: "sci_left_2", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_1"], branch: "left", branchIndex: 2 },
+        { id: "sci_anticoagulant_bullets", name: "Anticoagulant Bullets", cost: 2, maxLevel: SKILL_TREE_MAX_LEVEL, requires: ["sci_base"], branch: "left", branchIndex: 0 },
+        { id: "sci_sanguine_mod_channels", name: "Sanguine Mod Channels", cost: 12, maxLevel: 4, requires: ["sci_anticoagulant_bullets"], branch: "left", branchIndex: 1 },
+        { id: "sci_left_2", name: "", cost: 0, maxLevel: 1, requires: ["sci_sanguine_mod_channels"], branch: "left", branchIndex: 2 },
         { id: "sci_left_3", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_2"], branch: "left", branchIndex: 3 },
         { id: "sci_right_0", name: "", cost: 0, maxLevel: 1, requires: ["sci_base"], branch: "right", branchIndex: 0 },
         { id: "sci_right_1", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_0"], branch: "right", branchIndex: 1 },
         { id: "sci_right_2", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_1"], branch: "right", branchIndex: 2 },
         { id: "sci_right_3", name: "", cost: 0, maxLevel: 1, requires: ["sci_right_2"], branch: "right", branchIndex: 3 },
-        { id: "sci_top", name: "", cost: 0, maxLevel: 1, requires: ["sci_left_3", "sci_right_3"], branch: "top", branchIndex: 0 }
+        { id: "sci_top", name: "Blood Echo Forge", cost: 8, maxLevel: 1, requires: ["sci_left_3", "sci_right_3"], branch: "top", branchIndex: 0 }
       ]
     },
     {
@@ -449,13 +484,13 @@
         { id: "loot_base", name: "", cost: 0, maxLevel: 1, branch: "base", branchIndex: 0 },
         { id: "loot_left_0", name: "", cost: 0, maxLevel: 1, requires: ["loot_base"], branch: "left", branchIndex: 0 },
         { id: "loot_left_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_0"], branch: "left", branchIndex: 1 },
-        { id: "loot_left_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_1"], branch: "left", branchIndex: 2 },
+        { id: "loot_left_2", name: "Salvage Filter", cost: 2, maxLevel: 1, requires: ["loot_left_1"], branch: "left", branchIndex: 2 },
         { id: "loot_left_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_2"], branch: "left", branchIndex: 3 },
         { id: "loot_inv_slots", name: "Pack Mule", cost: 2, maxLevel: 3, requires: ["loot_base"], branch: "right", branchIndex: 0 },
         { id: "loot_right_1", name: "", cost: 0, maxLevel: 1, requires: ["loot_inv_slots"], branch: "right", branchIndex: 1 },
-        { id: "loot_right_2", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_1"], branch: "right", branchIndex: 2 },
+        { id: "loot_right_2", name: "Salvage Filter", cost: 2, maxLevel: 1, requires: ["loot_right_1"], branch: "right", branchIndex: 2 },
         { id: "loot_right_3", name: "", cost: 0, maxLevel: 1, requires: ["loot_right_2"], branch: "right", branchIndex: 3 },
-        { id: "loot_top", name: "", cost: 0, maxLevel: 1, requires: ["loot_left_3", "loot_right_3"], branch: "top", branchIndex: 0 }
+        { id: "loot_top", name: "Blood Echo Forge", cost: 8, maxLevel: 1, requires: ["loot_left_3", "loot_right_3"], branch: "top", branchIndex: 0 }
       ]
     }
   ];
@@ -474,6 +509,10 @@
   }
   function getCoreNodeCost(node, level, maxLevel){
     if(level >= maxLevel) return 0;
+    if (node.id === "sci_sanguine_mod_channels") {
+      const tier = [12, 16, 20, 28];
+      return tier[Math.min(level, tier.length - 1)];
+    }
     const idx = Math.max(0, Math.min(level, CORE_TREE_LEVEL_COST_BASE.length - 1));
     return CORE_TREE_LEVEL_COST_BASE[idx] * coreTreeTierFactor(node);
   }
@@ -492,6 +531,7 @@
     }
     if(["w","a","s","d","arrowup","arrowleft","arrowdown","arrowright"," "].includes(k) || e.key===" ") e.preventDefault();
     if(inCompare && k==="escape"){ e.preventDefault(); cancelCompare(); return; }
+    if(inventoryOpen && inventoryScrapConfirmOpen && k==="escape"){ e.preventDefault(); hideInventoryScrapConfirm(); return; }
     if(inventoryOpen && k==="escape"){ e.preventDefault(); closeInventory(); return; }
     if(level11ControlsWrap && k==="escape"){ e.preventDefault(); const btn = level11ControlsWrap.querySelector("#level11ControlsGotIt"); if(btn) btn.click(); return; }
     if(overlay && !overlay.classList.contains("hidden") && k==="escape"){
@@ -542,7 +582,7 @@
 
   // ========= Loot types/icons =========
   const TYPE_ICONS = {
-    weapon: ["⚔️","🗡️","🏹","🔫","🔱","🪓"],
+    weapon: ["🔫","⚡","💣","⚔️","🪓"],
     armor:  ["🛡️","🪖","🦺","🥾","🧤"],
     helmet: ["🪖","⛑️","👑","🎩"],
     boots:  ["🥾","👢","🩴"],
@@ -613,6 +653,12 @@
 
   // ========= State =========
   let running=false, paused=false, practice=false;
+  let metaCharacterLevel = (function(){
+    try {
+      const v = +localStorage.getItem("affixloot_meta_level");
+      return Number.isFinite(v) && v >= 1 ? (v | 0) : 1;
+    } catch (e) { return 1; }
+  })();
 
   // NEW: Hard-freeze game clock (elapsed time doesn't advance while paused/compare/menu)
   let gameTime = 0;        // seconds of active (unpaused) gameplay
@@ -655,7 +701,249 @@
 
     dpsEst:0,
     levelBonuses:{},
+    weaponStyle: "gun",
   };
+
+  function persistMetaCharacterLevel(){
+    try { localStorage.setItem("affixloot_meta_level", String(metaCharacterLevel)); } catch (e) {}
+  }
+  function getEffectiveCharacterLevel(){
+    const meta = Math.max(1, metaCharacterLevel | 0);
+    if (running && player && player.level != null) return Math.max(meta, player.level | 0);
+    return meta;
+  }
+  function itemGradeEquipBlockReason(item){
+    if (!item) return "Invalid item";
+    if (item.gradeRevealed !== true) return "Unknown grade — analyze in Armory (X)";
+    const g = item.grade | 0;
+    if (g <= 0) return "Invalid grade";
+    const req = Math.ceil(g / 10);
+    if (getEffectiveCharacterLevel() < req) return `Requires character level ${req} (⌈grade÷10⌉)`;
+    return "";
+  }
+  function hasBloodGradeForgeUnlocked(){
+    return (skillLevels["loot_top"] | 0) > 0 && (skillLevels["sci_top"] | 0) > 0;
+  }
+  function formatItemGradeLine(item){
+    if (!item) return "";
+    if (item.gradeRevealed !== true) return "Grade: ? (analyze in Armory)";
+    const g = item.grade | 0;
+    const cap = maxBloodUpgradesForGrade(g);
+    const used = Math.min(item.bloodRedSteps | 0, cap);
+    return `Grade ${g} • Red infusions ${used}/${cap} (max by grade)`;
+  }
+
+  // ========= Mod slots (Armory): scrap opens empty slots on item; blood (ml) sets properties in open slots. Scientist = max openable (skill). Grade forge G = lab blood. =========
+  const SCI_SANGUINE_MOD_CHANNELS_RED_ML = 10000;
+  /** Rarity-matched scrap to open mod slot #0, #1, … (carve channel on this item). */
+  const MOD_SLOT_OPEN_SCRAP_COSTS = {
+    uncommon: [6, 14],
+    rare: [4, 9, 16],
+    legendary: [3, 6, 11, 18],
+    mythic: [2, 5, 9, 14],
+    set: [3, 6, 11, 18],
+  };
+  const SCRAP_MOD_SYNERGIES = [
+    { id: "syn_red_blue", a: "red", b: "blue", name: "Thermocline", dmgPct: 2, asPct: 1.2 },
+    { id: "syn_red_green", a: "red", b: "green", name: "Blight Welter", hpFlat: 16, regenPct: 1 },
+    { id: "syn_blue_green", a: "blue", b: "green", name: "Cryo-Toxin", critAdd: 0.018, splashPct: 0.025 },
+    { id: "syn_red_purple", a: "red", b: "purple", name: "Arterial Surge", dmg: 1.5, msPct: 1 },
+    { id: "syn_green_purple", a: "green", b: "purple", name: "Spore Crown", lsPct: 0.006, thornsPct: 0.018 },
+    { id: "syn_blue_purple", a: "blue", b: "purple", name: "Neural Shatter", critDmgPct: 0.07, pierceAdd: 0.12 },
+  ];
+  const SCRAP_TIER_UP = [
+    { from: "common", to: "uncommon", need: 10 },
+    { from: "uncommon", to: "rare", need: 8 },
+    { from: "rare", to: "legendary", need: 6 },
+    { from: "legendary", to: "mythic", need: 4 },
+  ];
+  const MODDABLE_BLOOD_ORDER = ["red", "blue", "green", "purple", "amber", "ivory", "crimson", "obsidian"];
+
+  let discoveredScrapSynergies = (function(){
+    try {
+      const raw = localStorage.getItem("affixloot_scrap_synergy_discovered");
+      const a = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(a) ? a : []);
+    } catch (e) { return new Set(); }
+  })();
+  function persistDiscoveredScrapSynergies(){
+    try { localStorage.setItem("affixloot_scrap_synergy_discovered", JSON.stringify([...discoveredScrapSynergies])); } catch (e) {}
+  }
+
+  function ensureItemScrapMods(it){
+    if (!it || typeof it !== "object") return;
+    if (!Array.isArray(it.scrapMods)) it.scrapMods = [];
+  }
+  /** Sync modSlotsOpened vs scrapMods and Scientist/rarity budget (call before mod UI / armory actions). */
+  function ensureItemModSlotState(it){
+    ensureItemScrapMods(it);
+    const budget = getMaxBloodModSlotsForItem(it);
+    let opened = it.modSlotsOpened;
+    if (opened == null || opened === undefined) opened = it.scrapMods.length;
+    opened |= 0;
+    opened = Math.max(opened, it.scrapMods.length);
+    opened = Math.min(opened, Math.max(0, budget));
+    if (it.scrapMods.length > opened) it.scrapMods.length = opened;
+    it.modSlotsOpened = opened;
+  }
+  function getRarityBloodModSlotCap(rar){
+    const m = { uncommon: 1, rare: 2, legendary: 3, mythic: 4, set: 4 };
+    return m[rar] || 0;
+  }
+  function getScientistModChannelUnlockedSlots(){
+    return Math.min(4, skillLevels["sci_sanguine_mod_channels"] | 0);
+  }
+  /** Max mod slots this item may have opened: min(rarity cap, Scientist Sanguine Mod Channels). Pay scrap per slot to carve. */
+  function getMaxBloodModSlotsForItem(item){
+    const rar = item && item.rarity ? item.rarity : "common";
+    return Math.min(getRarityBloodModSlotCap(rar), getScientistModChannelUnlockedSlots());
+  }
+  function getModSlotsOpened(it){
+    ensureItemModSlotState(it);
+    return it.modSlotsOpened | 0;
+  }
+  /** Next scrap cost to open one more slot (index = current modSlotsOpened). */
+  function getNextModSlotOpenScrapCost(item){
+    ensureItemModSlotState(item);
+    const rar = item.rarity || "common";
+    const list = MOD_SLOT_OPEN_SCRAP_COSTS[rar];
+    const budget = getMaxBloodModSlotsForItem(item);
+    const opened = item.modSlotsOpened | 0;
+    if (!list || budget <= 0 || opened >= budget) return null;
+    if (opened >= list.length) return null;
+    return { scrapRarity: rar, amount: list[opened] };
+  }
+  /** Next blood etch: only if there is an open but empty slot (modSlotsOpened > scrapMods.length). */
+  function getNextBloodModMlNeed(item){
+    ensureItemModSlotState(item);
+    const maxBudget = getMaxBloodModSlotsForItem(item);
+    const opened = item.modSlotsOpened | 0;
+    if (getRarityBloodModSlotCap(item.rarity || "common") <= 0) return null;
+    if (maxBudget <= 0) return null;
+    if (item.scrapMods.length >= opened) return null;
+    return getBloodModEtchMlCost(item.scrapMods.length);
+  }
+  function getBloodModEtchMlCost(slotIndex){
+    return 40 + slotIndex * 16;
+  }
+  function isBloodTypeUnlockedForScrapMods(bloodId){
+    const field = {
+      red: "blood_red_analysis",
+      blue: "blood_blue_discovery",
+      green: "blood_green_discovery",
+      purple: "blood_purple_discovery",
+    };
+    if (field[bloodId]) return isIntelUnlocked("orders", field[bloodId]);
+    if (bloodId === "amber" || bloodId === "ivory" || bloodId === "crimson" || bloodId === "obsidian")
+      return (baseBloodMl[bloodId] | 0) >= 40;
+    return false;
+  }
+  function getKnownBloodIdsForScrapMods(){
+    return MODDABLE_BLOOD_ORDER.filter(isBloodTypeUnlockedForScrapMods);
+  }
+  function getBloodScrapModDeltas(bloodId, itemType){
+    const z = { dmg: 0, dmgPct: 0, hpFlat: 0, shieldFlat: 0, regenPct: 0, critAdd: 0, critDmgPct: 0, splashPct: 0, lsPct: 0, asPct: 0, msPct: 0, pickupFlat: 0, xpPct: 0, thornsPct: 0, pierceAdd: 0 };
+    const t = itemType;
+    const L = (o) => Object.assign(z, o);
+    switch (bloodId) {
+      case "red":
+        if (t === "weapon") return L({ dmg: 1, asPct: 0.8 });
+        if (t === "armor") return L({ shieldFlat: 2, hpFlat: 1 });
+        if (t === "ring") return L({ pickupFlat: 4, msPct: 0.6 });
+        if (t === "jewel") return L({ xpPct: 0.012 });
+        return L({ hpFlat: 3 });
+      case "blue":
+        if (t === "weapon") return L({ dmgPct: 1.5, dmg: 0.4 });
+        if (t === "armor") return L({ shieldFlat: 2, regenPct: 1 });
+        if (t === "ring") return L({ critAdd: 0.015 });
+        if (t === "jewel") return L({ critDmgPct: 0.05 });
+        return L({ shieldFlat: 2 });
+      case "green":
+        if (t === "weapon") return L({ splashPct: 0.02, dmg: 0.35 });
+        if (t === "armor") return L({ hpFlat: 4, thornsPct: 0.012 });
+        if (t === "ring") return L({ thornsPct: 0.015, pickupFlat: 2 });
+        if (t === "jewel") return L({ xpPct: 0.01, splashPct: 0.015 });
+        return L({ msPct: 0.7, hpFlat: 2 });
+      case "purple":
+        if (t === "weapon") return L({ dmg: 0.8, dmgPct: 1, pierceAdd: 0.08 });
+        if (t === "armor") return L({ shieldFlat: 2, hpFlat: 2, regenPct: 0.6 });
+        if (t === "ring") return L({ dmgPct: 0.8, pickupFlat: 3 });
+        if (t === "jewel") return L({ critAdd: 0.01, xpPct: 0.01 });
+        return L({ msPct: 1, shieldFlat: 1 });
+      case "amber":
+        if (t === "weapon") return L({ asPct: 1.1, regenPct: 0.5 });
+        if (t === "armor") return L({ regenPct: 1.4, shieldFlat: 1 });
+        if (t === "ring") return L({ regenPct: 0.8, pickupFlat: 2 });
+        if (t === "jewel") return L({ xpPct: 0.015 });
+        return L({ hpFlat: 3, regenPct: 0.6 });
+      case "ivory":
+        if (t === "weapon") return L({ lsPct: 0.004, hpFlat: 2 });
+        if (t === "armor") return L({ hpFlat: 5, shieldFlat: 1 });
+        if (t === "ring") return L({ hpFlat: 3, regenPct: 0.5 });
+        if (t === "jewel") return L({ hpFlat: 4, xpPct: 0.008 });
+        return L({ hpFlat: 4 });
+      case "crimson":
+        if (t === "weapon") return L({ dmg: 1.1, lsPct: 0.005 });
+        if (t === "armor") return L({ thornsPct: 0.02, hpFlat: 2 });
+        if (t === "ring") return L({ dmgPct: 0.9, thornsPct: 0.01 });
+        if (t === "jewel") return L({ critDmgPct: 0.04, splashPct: 0.012 });
+        return L({ hpFlat: 2, thornsPct: 0.012 });
+      case "obsidian":
+        if (t === "weapon") return L({ dmgPct: 1.8, pierceAdd: 0.1 });
+        if (t === "armor") return L({ shieldFlat: 3, regenPct: 0.7 });
+        if (t === "ring") return L({ shieldFlat: 2, critAdd: 0.012 });
+        if (t === "jewel") return L({ critDmgPct: 0.06 });
+        return L({ shieldFlat: 2, dmgPct: 0.5 });
+      default:
+        return z;
+    }
+  }
+  function applyScrapSynergyBonusesToAgg(mods, tgt){
+    const set = new Set(mods);
+    for (const syn of SCRAP_MOD_SYNERGIES) {
+      if (!set.has(syn.a) || !set.has(syn.b)) continue;
+      if (syn.dmg) tgt.dmg += syn.dmg;
+      if (syn.dmgPct) tgt.dmgPct += syn.dmgPct;
+      if (syn.hpFlat) tgt.hpFlat += syn.hpFlat;
+      if (syn.shieldFlat) tgt.shieldFlat += syn.shieldFlat;
+      if (syn.regenPct) tgt.regenPct += syn.regenPct;
+      if (syn.critAdd) tgt.critAdd += syn.critAdd;
+      if (syn.critDmgPct) tgt.critDmgPct += syn.critDmgPct;
+      if (syn.splashPct) tgt.splashPct += syn.splashPct;
+      if (syn.lsPct) tgt.lsPct += syn.lsPct;
+      if (syn.asPct) tgt.asPct += syn.asPct;
+      if (syn.msPct) tgt.msPct += syn.msPct;
+      if (syn.thornsPct) tgt.thornsPct += syn.thornsPct;
+      if (syn.pierceAdd) tgt.pierceAdd += syn.pierceAdd;
+    }
+  }
+  function registerNewScrapSynergiesFromMods(mods){
+    const set = new Set(mods);
+    let anyNew = false;
+    for (const syn of SCRAP_MOD_SYNERGIES) {
+      if (!set.has(syn.a) || !set.has(syn.b)) continue;
+      if (discoveredScrapSynergies.has(syn.id)) continue;
+      discoveredScrapSynergies.add(syn.id);
+      anyNew = true;
+      showSimpleToast(`Synergy found: ${syn.name} (hidden combo)`);
+    }
+    if (anyNew) persistDiscoveredScrapSynergies();
+  }
+  function tryUnlockScrapSynergyMemoFromFieldIntel(){
+    if (!isIntelUnlocked("orders", "blood_red_analysis") || !isIntelUnlocked("orders", "blood_blue_discovery")) return;
+    unlockIntel("orders", "scrap_synergy_field_memo");
+  }
+  function formatScrapModsLine(item){
+    ensureItemModSlotState(item);
+    const capR = getRarityBloodModSlotCap(item.rarity || "common");
+    const ch = getScientistModChannelUnlockedSlots();
+    const max = getMaxBloodModSlotsForItem(item);
+    const opened = item.modSlotsOpened | 0;
+    if (capR <= 0) return "Mod slots: — (uncommon+ gear)";
+    if (ch <= 0) return `Mod slots: locked (Scientist Sanguine Mod Channels — ${SCI_SANGUINE_MOD_CHANNELS_RED_ML} ml Red + tokens/lv)`;
+    const names = item.scrapMods.map(id => (typeof window.getBloodType === "function" && window.getBloodType(id)?.name) || id);
+    return `Mods: ${item.scrapMods.length} filled / ${opened} open / ${max} max (Scientist ${ch}/4)${names.length ? " — " + names.join(", ") : ""}`;
+  }
 
   const EQUIPPED_STORAGE_KEY = "affixloot_equipped";
   let equipped = (function(){
@@ -748,20 +1036,51 @@
     return item;
   }
 
-  // Scrap: by rarity (common, uncommon, rare, legendary, set). Base storage + run tracking.
+  function makeStarterWeapon(){
+    return { type: "weapon", rarity: "common", tier: 1, icon: "🔫", name: "Gun", weaponCore: "Gun", weaponStyle: "gun", base: { dmg: 11, atk: 0.38 }, affixes: [], grade: 10, gradeRevealed: true, bloodRedSteps: 0, modSlotsOpened: 0, scrapMods: [] };
+  }
+  function makeStarterVest(){
+    return { type: "armor", rarity: "common", tier: 1, icon: "🦺", name: "Vest", base: { shield: 14, hp: 6 }, affixes: [], grade: 10, gradeRevealed: true, bloodRedSteps: 0, modSlotsOpened: 0, scrapMods: [] };
+  }
+  function makeStarterBoots(){
+    return { type: "boots", rarity: "common", tier: 1, icon: "🥾", name: "Boots", base: { moveSpeed: 8 }, affixes: [], grade: 10, gradeRevealed: true, bloodRedSteps: 0, modSlotsOpened: 0, scrapMods: [] };
+  }
+  function runGradeSystemMigration(){
+    if (localStorage.getItem(GRADE_SYSTEM_MIGRATION_KEY)) return;
+    try {
+      inventory = [];
+      saveInventory();
+      stash = [];
+      saveStash();
+      equipped.weapon = makeStarterWeapon();
+      equipped.armor = makeStarterVest();
+      equipped.feet = makeStarterBoots();
+      equipped.head = null;
+      equipped.ring1 = null;
+      equipped.ring2 = null;
+      equipped.jewel = null;
+      saveEquipped();
+      saveInventory();
+      saveStash();
+      localStorage.setItem(GRADE_SYSTEM_MIGRATION_KEY, "1");
+    } catch (e) {}
+  }
+  runGradeSystemMigration();
+
+  // Scrap: by rarity (common, uncommon, rare, legendary, mythic, set). Base storage + run tracking.
   const SCRAP_STORAGE_KEY = "affixloot_base_scrap";
   let baseScrap = (function(){
     try {
       const raw = localStorage.getItem(SCRAP_STORAGE_KEY);
-      if (!raw) return { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+      if (!raw) return { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 };
       const o = JSON.parse(raw);
-      return { common: o.common|0, uncommon: o.uncommon|0, rare: o.rare|0, legendary: o.legendary|0, set: o.set|0 };
-    } catch (e) { return { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 }; }
+      return { common: o.common|0, uncommon: o.uncommon|0, rare: o.rare|0, legendary: o.legendary|0, mythic: o.mythic|0, set: o.set|0 };
+    } catch (e) { return { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 }; }
   })();
   function saveBaseScrap(){
     try { localStorage.setItem(SCRAP_STORAGE_KEY, JSON.stringify(baseScrap)); } catch (e) {}
   }
-  let runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+  let runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 };
   function getScrapValue(item){
     if (!item) return 0;
     const tier = item.tier || getItemTier(item);
@@ -769,7 +1088,7 @@
     return tier + affixBonus;
   }
 
-  let enemies=[], bullets=[], enemyProjectiles=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[];
+  let enemies=[], bullets=[], enemyProjectiles=[], orbs=[], lootDrops=[], particles=[], levelUpRings=[], bladeSwipes=[];
   const MAX_LOOT_DROPS = 30;   // cap for long runs; remove oldest when exceeded
   const MAX_ORBS = 150;        // cap for long runs; remove oldest when exceeded
   // Level 1-1: welding interaction around manholes (similar to blood sampling)
@@ -778,6 +1097,8 @@
   let kills=0, minibossKills=0, bossKills=0, lootCount=0, streak=0, streakT=0;
   let threat=1.0, spawnAcc=0, atkCD=0;
   let lootPickupCooldown=0;
+  /** True while player overlaps any loot with full inventory; toast only on false→true edge (leave loot, then return = new toast). */
+  let lootFullApproachLatch=false;
 
   // Boss control (endless: mini-boss every minute, boss every 5 minutes)
   let minibossWarned=false, minibossSpawned=false, bossWarned=false, bossSpawned=false, bossKilled=false;
@@ -800,23 +1121,42 @@
   let extractionFlameRing=null;
   let deathSequence=null;
   let tokensAtRunStart=0;
-  let runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
+  let runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0, mythic:0 };
   let runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
   // Blood pools (from enemy kills): type from bloodTypes.js; runBloodMl = ml per blood type id (red, green, blue, …)
   let bloodPools = [];
   let runBloodMl = {};
-  let gatheringPool = null;
-  let gatheringStartT = 0;
-  let gatheringAccumulatedMs = 0;
   const BLOOD_COAGULATE_SEC = 2;
+  /** After coagulation, pool is removed this many seconds later if not sampled (gathered). */
+  const BLOOD_POOL_COAGULATED_LINGER_SEC = 3;
   const BLOOD_GATHER_SEC = 2;
   const BLOOD_GATHER_RADIUS = 30;
   const BLOOD_POOL_MAX_AGE_SEC = 10;
-  const BLOOD_POOL_REMOVE_AFTER_SEC = 20; // 10s to dark, then 10s more on board, then remove
-  // Five red stages (light → almost black), 2s each over 10s; then coagulated (can't sample); remove after 20s
+  const BLOOD_POOL_REMOVE_AFTER_SEC = 20; // baseline; multiplied per pool by bloodTimeMult (Anticoagulant Bullets)
+  // Five red stages spread over BLOOD_POOL_MAX_AGE_SEC (× bloodTimeMult); sample unlocks at BLOOD_COAGULATE_SEC; expiry + remove scale with mult
   const BLOOD_POOL_COLOR_STAGES = ["#f04444", "#c0392b", "#922b21", "#641e16", "#1a0505"];
   const BLOOD_POOL_CHANCE_NORMAL = 0.10;
   const BLOOD_POOL_CHANCE_ELITE = 0.35;
+
+  function bloodPoolCirclesOverlap(a, b){
+    const ra = a.mainR != null ? a.mainR : 14 * PX;
+    const rb = b.mainR != null ? b.mainR : 14 * PX;
+    const rr = ra + rb;
+    return dist2(a.x, a.y, b.x, b.y) < rr * rr;
+  }
+  /** Higher `bloodPools` index = drawn later = on top. Blocked until overlapping above is gathered or expired (utbrukt). */
+  function bloodPoolBlockedByOverlappingAbove(poolIndex){
+    const pool = bloodPools[poolIndex];
+    if (!pool) return false;
+    for (let j = poolIndex + 1; j < bloodPools.length; j++) {
+      const above = bloodPools[j];
+      if (above.gathered) continue;
+      if (above.expired) continue;
+      if (!bloodPoolCirclesOverlap(pool, above)) continue;
+      return true;
+    }
+    return false;
+  }
 
   // High score
   let hiBestTime = +localStorage.getItem("affixloot_best_time") || 0;
@@ -840,6 +1180,11 @@
   let mallProps = [];
   // Level 1-1 special scenario: manhole zones with clustered mice
   let level11Active = false;
+  /** Other mall levels (1-2, 1-3, endless mall): initial mouse clusters gnawing on skeletons until aggro. */
+  let biome1GnawClusters = [];
+  let biome1AggroMovePx = 0;
+  let biome1ClusterIdCounter = 1;
+  let mallGnawMasterAcc = 0;
   let level11Zones = [];          // { id, manholeIndex, corpseX, corpseY, corpseR, aggroR, activated, triggeredAt, minibossSpawned, spawnsStopped, spawnAcc, closed }
   let level11ZonesCleared = 0;    // how many manholes have been welded shut
   let level11Arrow = null;        // { targetX, targetY, t, life }
@@ -894,6 +1239,27 @@
     skMouseSprites.move2.src = sp("Skittering_mouse2-removebg-preview.png");
     skMouseSprites.gape = null;
   })();
+  const biome1SkeletonImgs = [1, 2, 3, 4].map((n) => {
+    const img = new Image();
+    img.src = "assets/graphics/Skeleton" + n + ".png";
+    return img;
+  });
+
+  // Dog enemy sprites (Biom 1, mob type #2) – 2-frame movement loop.
+  const dogSprites = {
+    move1: null,
+    move2: null,
+  };
+  (function preloadDogSprites(){
+    // Place the two frames here as PNGs, transparent background:
+    // assets/sprites/dog/move1.png and assets/sprites/dog/move2.png
+    const base = "assets/sprites/dog/";
+    const enc = (name) => base + encodeURIComponent(name);
+    dogSprites.move1 = new Image();
+    dogSprites.move1.src = enc("move1.png");
+    dogSprites.move2 = new Image();
+    dogSprites.move2.src = enc("move2.png");
+  })();
 
   // Player sprites: front/back animasjon + idle når stå stille + extraction liftoff.
   const playerSprites = { front: [], back: [], frontIdle: null, backIdle: null, extraction: null };
@@ -937,6 +1303,258 @@
   let tutorialBubbleEl = null;
   let level11ControlsWrap = null;
 
+  /** First-visit banter in the base (hub / menus). Tech Specialist Theo Felis — same flow as level-1-1 Astra dialogue (typewriter + portrait). */
+  const THEO_BASE_STORAGE_KEY = "affixloot_theo_base_tips";
+  /** Try in order (actual filename in /assets/graphics/ is Tech_Specialist_Theo_Felis_Speak.png). */
+  const THEO_PORTRAIT_URLS_SPEAK = [
+    "assets/graphics/Tech_Specialist_Theo_Felis_Speak.png",
+    "assets/graphics/Theo_Felis_Speak.png",
+  ];
+  const THEO_PORTRAIT_URLS_STATIC = [
+    "assets/graphics/Tech_Specialist_Thoe_Felis_Portrait.png",
+    "assets/graphics/Tech_Specialist_Theo_Felis_Portrait.png",
+    "assets/graphics/Theo_Felis_Portrait.png",
+  ];
+  const THEO_BASE_DIALOGUE_START_DELAY_MS = 2000;
+  const THEO_BASE_DIALOGUE_CHAR_MS = 42;
+  const THEO_BASE_DIALOGUE_HOLD_MS = 2000;
+  /** Each script: variants; each variant = array of lines (one typewriter pass each), like Astra multi-beat dialogue. */
+  const THEO_BASE_SCRIPTS = {
+    hub_welcome: [
+      ["Oh—you're actually here.", "I'm Theo Felis, tech.", "This pod? Mostly my wiring. Click a room—if it blinks, that was probably me."],
+      ["Fresh boots on the deck.", "I'm Theo. Lights stay honest; doors stay confused.", "Poke around. Nothing explodes. Usually."],
+      ["So you're the new traffic through our doors.", "Theo, technical side.", "Quiet in here until you know where to tap. Have fun."],
+    ],
+    chem_lab: [
+      ["Chemistry Lab.", "We turn weird blood into weirder potions.", "Don't lick the glassware—the paperwork tastes worse."],
+      ["Samples in, experiments out.", "I label jars. People still swap them.", "Science is hopeful. Humans are improvisational."],
+      ["Smells like ethanol and ambition.", "Brew for your next run.", "Wonder why red never stays red. I still do."],
+    ],
+    armory: [
+      ["Armory.", "Scrap carves slots. Blood paints stats.", "I didn't write the poem—I solder the lockers."],
+      ["Gear checks happen here.", "I fix hinges; your build does the drama.", "If a hotkey confuses you, welcome to the club."],
+      ["Stash, scrap, etchings…", "Aggressive housekeeping,", "with better sound effects."],
+    ],
+    intel: [
+      ["Intel terminal.", "Official stuff up top, rumours in the margins.", "Footnotes are louder than the cover story."],
+      ["Classified lives here.", "Some of it even helps.", "Read it before command picks a calmer font."],
+      ["Orders, bestiary, achievements…", "Dry words, spicy implications.", "I bookmark what makes command sigh."],
+    ],
+    core_systems: [
+      ["Core Systems.", "Those glowing brain-ball trees.", "Astrology for soldiers—but the math checks out."],
+      ["Skill trees in space drag.", "Tokens buy nodes.", "I nod and pretend I planned every branch."],
+      ["Tap a sphere.", "Wince at the cost.", "I maintain the starfield—you bring the ambition."],
+    ],
+    contracts: [
+      ["Contracts board.", "Extra work, extra payoff.", "Fine print says 'none.' Classic trap."],
+      ["Side jobs live here.", "I stamp approved when nobody's looking.", "Legally fuzzy. Emotionally tidy."],
+      ["Pick a contract.", "Read the vibe.", "The board doesn't judge—it waits."],
+    ],
+    drop_zone: [
+      ["Drop zone.", "Pick a floor. Break things. Bring juice home.", "Tuesday energy, different tunnel."],
+      ["This is the door out.", "Levels unlock as you earn them.", "Carrot on a stick. Slightly radioactive."],
+      ["Choose a level.", "Breathe.", "Extraction still exists—I checked."],
+    ],
+    options_pod: [
+      ["Settings pod.", "Volume, vibes, eventual sliders.", "I keep mine loud enough to miss the alarms."],
+      ["Tweak before your ears complain.", "Brighter HUD, darker humour.", "Balance is personal."],
+      ["Options.", "Quiet room of the apocalypse.", "Turn knobs. I'll pretend I didn't hear you."],
+    ],
+  };
+  let theoBaseDialogue = null;
+  let theoBaseDialogueRaf = 0;
+  let theoBaseKeyHandler = null;
+  function theoBaseWirePortraitImg(img, faceFb){
+    const chain = THEO_PORTRAIT_URLS_SPEAK.concat(THEO_PORTRAIT_URLS_STATIC);
+    let i = 0;
+    function loadNext(){
+      if(i >= chain.length){
+        img.style.display = "none";
+        faceFb.style.display = "flex";
+        return;
+      }
+      img.onload = () => { faceFb.style.display = "none"; };
+      img.onerror = () => { i++; loadNext(); };
+      img.src = chain[i];
+    }
+    loadNext();
+  }
+  function getTheoBaseSeen(id){
+    try{
+      const raw = localStorage.getItem(THEO_BASE_STORAGE_KEY);
+      const o = raw ? JSON.parse(raw) : {};
+      return o[id] === true;
+    } catch(e){ return false; }
+  }
+  function setTheoBaseSeen(id){
+    try{
+      const raw = localStorage.getItem(THEO_BASE_STORAGE_KEY);
+      const o = raw ? JSON.parse(raw) : {};
+      o[id] = true;
+      localStorage.setItem(THEO_BASE_STORAGE_KEY, JSON.stringify(o));
+    } catch(e){}
+  }
+  function theoBaseStopRaf(){
+    if(theoBaseDialogueRaf){
+      cancelAnimationFrame(theoBaseDialogueRaf);
+      theoBaseDialogueRaf = 0;
+    }
+  }
+  function theoBaseFinishDialogue(){
+    theoBaseStopRaf();
+    if(theoBaseKeyHandler){
+      document.removeEventListener("keydown", theoBaseKeyHandler);
+      theoBaseKeyHandler = null;
+    }
+    if(theoBaseDialogue){
+      if(theoBaseDialogue.scriptId) setTheoBaseSeen(theoBaseDialogue.scriptId);
+      if(theoBaseDialogue.root && theoBaseDialogue.root.parentNode) theoBaseDialogue.root.remove();
+      theoBaseDialogue = null;
+    }
+    beep({ freq: 480, dur: 0.06, type: "sine", gain: 0.05 });
+  }
+  function theoBaseGetVisibleLineText(){
+    const d = theoBaseDialogue;
+    if(!d || d.lineIndex >= d.lines.length) return "";
+    const line = d.lines[d.lineIndex];
+    if(d.lineDisplayUntil > 0) return line;
+    return line.slice(0, d.charIndex);
+  }
+  function theoBaseUpdateVisibleText(){
+    const d = theoBaseDialogue;
+    if(!d || !d.textEl) return;
+    d.textEl.textContent = theoBaseGetVisibleLineText();
+  }
+  function theoBaseDialogueTick(){
+    if(!theoBaseDialogue) return;
+    const d = theoBaseDialogue;
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    if(d.nextCharAt === 0) d.nextCharAt = now;
+    while(d.lineIndex < d.lines.length){
+      const line = d.lines[d.lineIndex];
+      if(d.lineDisplayUntil > 0){
+        if(now < d.lineDisplayUntil) break;
+        d.lineDisplayUntil = 0;
+        d.charIndex = 0;
+        d.lineIndex++;
+        if(d.lineIndex >= d.lines.length){
+          theoBaseFinishDialogue();
+          return;
+        }
+        d.nextCharAt = now + 200;
+        continue;
+      }
+      if(d.charIndex < line.length){
+        if(now >= d.nextCharAt){
+          d.charIndex++;
+          d.nextCharAt = now + THEO_BASE_DIALOGUE_CHAR_MS;
+        }
+        break;
+      }
+      d.lineDisplayUntil = now + THEO_BASE_DIALOGUE_HOLD_MS;
+      break;
+    }
+    theoBaseUpdateVisibleText();
+    if(theoBaseDialogue) theoBaseDialogueRaf = requestAnimationFrame(theoBaseDialogueTick);
+  }
+  function theoBaseAdvanceDialogue(){
+    const d = theoBaseDialogue;
+    if(!d) return;
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    beep({ freq: 520, dur: 0.04, type: "triangle", gain: 0.04 });
+    if(d.lineDisplayUntil > 0){
+      d.lineDisplayUntil = now;
+      return;
+    }
+    const line = d.lines[d.lineIndex];
+    if(d.charIndex < line.length){
+      d.charIndex = line.length;
+      d.lineDisplayUntil = now + THEO_BASE_DIALOGUE_HOLD_MS;
+      theoBaseUpdateVisibleText();
+    }
+  }
+  /** After ~2s quiet, open Theo dialogue once per scriptId (English). */
+  function scheduleTheoBaseTipIfNew(scriptId){
+    if(getTheoBaseSeen(scriptId)) return;
+    if(document.getElementById("theoBaseTipRoot")) return;
+    const variants = THEO_BASE_SCRIPTS[scriptId];
+    if(!variants || !variants.length) return;
+    setTimeout(() => {
+      if(getTheoBaseSeen(scriptId)) return;
+      if(document.getElementById("theoBaseTipRoot")) return;
+      const lines = variants[Math.floor(Math.random() * variants.length)];
+      if(!lines || !lines.length) return;
+      const root = document.createElement("div");
+      root.id = "theoBaseTipRoot";
+      root.className = "theoBaseTipRoot";
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-labelledby", "theoBaseDlgSpeaker");
+      const row = document.createElement("div");
+      row.className = "theoBaseDlgRow";
+      const portraitCol = document.createElement("div");
+      portraitCol.className = "theoBaseDlgPortraitCol";
+      const img = document.createElement("img");
+      img.className = "theoBaseDlgPortraitImg";
+      img.alt = "";
+      const faceFb = document.createElement("div");
+      faceFb.className = "theoBaseDlgPortraitFallback";
+      faceFb.textContent = "🐱";
+      theoBaseWirePortraitImg(img, faceFb);
+      portraitCol.appendChild(img);
+      portraitCol.appendChild(faceFb);
+      const bubble = document.createElement("div");
+      bubble.className = "theoBaseDlgBubble";
+      const label = document.createElement("div");
+      label.className = "theoBaseDlgLabel";
+      label.id = "theoBaseDlgSpeaker";
+      label.textContent = "Theo";
+      const sub = document.createElement("div");
+      sub.className = "theoBaseDlgSub";
+      sub.textContent = "Tech Specialist";
+      const textEl = document.createElement("div");
+      textEl.className = "theoBaseDlgText";
+      textEl.setAttribute("aria-live", "polite");
+      const hint = document.createElement("div");
+      hint.className = "theoBaseDlgHint";
+      hint.textContent = "E / Enter / click — continue";
+      bubble.appendChild(label);
+      bubble.appendChild(sub);
+      bubble.appendChild(textEl);
+      bubble.appendChild(hint);
+      row.appendChild(portraitCol);
+      row.appendChild(bubble);
+      root.appendChild(row);
+      root.addEventListener("click", () => theoBaseAdvanceDialogue());
+      document.body.appendChild(root);
+      theoBaseDialogue = {
+        scriptId,
+        lines,
+        lineIndex: 0,
+        charIndex: 0,
+        nextCharAt: 0,
+        lineDisplayUntil: 0,
+        root,
+        textEl,
+      };
+      theoBaseUpdateVisibleText();
+      theoBaseKeyHandler = (ev) => {
+        const k = ev.key;
+        if(k === "Escape"){
+          ev.preventDefault();
+          theoBaseFinishDialogue();
+          return;
+        }
+        if(k === "Enter" || k === "e" || k === "E"){
+          ev.preventDefault();
+          theoBaseAdvanceDialogue();
+        }
+      };
+      document.addEventListener("keydown", theoBaseKeyHandler);
+      beep({ freq: 620, dur: 0.05, type: "triangle", gain: 0.05 });
+      theoBaseDialogueRaf = requestAnimationFrame(theoBaseDialogueTick);
+    }, THEO_BASE_DIALOGUE_START_DELAY_MS);
+  }
+
   // Skill Upgrades: tokens (50 XP = 1 token, granted automatically during run)
   let tokens = Math.max(0, +(localStorage.getItem("affixloot_tokens") || 0));
   if (typeof DEV_GIVE_TOKENS === "number" && DEV_GIVE_TOKENS > 0) tokens = DEV_GIVE_TOKENS;
@@ -948,6 +1566,34 @@
       return typeof o==="object" ? o : {};
     } catch(e){ return {}; }
   })();
+  (function migrateSciAnticoagulantNodeId(){
+    try {
+      const oldLv = skillLevels["sci_left_0"] | 0;
+      if (oldLv > 0 && !(skillLevels["sci_anticoagulant_bullets"] > 0)) {
+        skillLevels["sci_anticoagulant_bullets"] = Math.min(SKILL_TREE_MAX_LEVEL, oldLv);
+        delete skillLevels["sci_left_0"];
+        localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
+      }
+    } catch (e) {}
+  })();
+  (function migrateSciSanguineModChannelsNodeId(){
+    try {
+      const lv = skillLevels["sci_left_1"] | 0;
+      if (lv > 0 && (skillLevels["sci_sanguine_mod_channels"] | 0) <= 0) {
+        skillLevels["sci_sanguine_mod_channels"] = Math.min(4, lv);
+        delete skillLevels["sci_left_1"];
+        localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
+      }
+    } catch (e) {}
+  })();
+  /** Scientist Anticoagulant Bullets: +5% longer blood pool life per level (time until expired + fade-off). Snapshot on each new pool. */
+  function getAnticoagulantBloodTimeMult(){
+    const tree = SKILL_TREES.find(t => t.id === "scientist");
+    const node = tree && tree.nodes && tree.nodes.find(n => n.id === "sci_anticoagulant_bullets");
+    const cap = node && node.maxLevel != null ? node.maxLevel : SKILL_TREE_MAX_LEVEL;
+    const lv = Math.min(skillLevels["sci_anticoagulant_bullets"] || 0, cap);
+    return 1 + 0.05 * lv;
+  }
   let skillTreePurchased = (function(){
     try {
       const raw = localStorage.getItem("affixloot_skill_tree_purchased");
@@ -997,20 +1643,30 @@
     bloodResearch = { speed: false, dmg: false, toxic: false, speedAndDmg: false };
     potionQueue = [];
     stash = [];
-    baseScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
-    equipped = { weapon: null, head: null, armor: null, feet: null, ring1: null, ring2: null, jewel: null };
+    baseScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 };
+    metaCharacterLevel = 1;
+    persistMetaCharacterLevel();
+    equipped = { weapon: makeStarterWeapon(), head: null, armor: makeStarterVest(), feet: makeStarterBoots(), ring1: null, ring2: null, jewel: null };
+    try { localStorage.setItem(GRADE_SYSTEM_MIGRATION_KEY, "1"); } catch (e) {}
+    discoveredScrapSynergies = new Set();
+    persistDiscoveredScrapSynergies();
     inventory = [];
+    saveEquipped();
+    saveInventory();
+    saveStash();
+    saveBaseScrap();
     // Intel and achievements are cleared via PROGRESSION_KEYS (localStorage); they get default values when initialized later.
   }
 
   // One-time reset: bump version to clear all progression for a clean release.
-  const AFFIXLOOT_STORAGE_VERSION = 6;
+  const AFFIXLOOT_STORAGE_VERSION = 7;
   (function resetProgressionIfNewVersion(){
     const key = "affixloot_storage_version";
     if(localStorage.getItem(key) === String(AFFIXLOOT_STORAGE_VERSION)) return;
     for(const k of PROGRESSION_KEYS) try{ localStorage.removeItem(k); }catch(e){}
     try{
       Object.keys(localStorage).filter(k => k.startsWith("affixloot_tutorial_")).forEach(k => localStorage.removeItem(k));
+      Object.keys(localStorage).filter(k => k.startsWith("affixloot_theo_base_")).forEach(k => localStorage.removeItem(k));
     }catch(e){}
     try{ localStorage.setItem(key, String(AFFIXLOOT_STORAGE_VERSION)); }catch(e){}
     applyCleanProgressionState();
@@ -1022,6 +1678,8 @@
   let tokenPops = []; // { x, y, t, life } world coords, drawn above player
   let pendingLoot=null;
   let inCompare=false;
+  /** inv weapon fingerprint -> equipped weapon fingerprint when that inv compare was closed; no blink until weapon slot changes and stats qualify again. */
+  let weaponBlinkSuppressed = {};
   let compareSelectionIndex=0;  // 0 = left (keep current), 1 = right (equip new)
   let compareLeftCardRef=null, compareRightCardRef=null;
 
@@ -1066,17 +1724,44 @@
     if(r==="common") return 0;
     if(r==="uncommon") return (Math.random()<0.50)?1:0;
     if(r==="rare") return 1 + (Math.random()<0.55?1:0);
+    if(r==="legendary" || r==="mythic") return 2 + (Math.random()<0.75?1:0) + (Math.random()<0.30?1:0);
     return 2 + (Math.random()<0.75?1:0) + (Math.random()<0.30?1:0);
   }
   function makeItem(type, rarity){
-    const icon = pick(TYPE_ICONS[type]);
-    const tier = rarity==="common"?1:rarity==="uncommon"?2:rarity==="rare"?3:4;
+    const tier = rarity==="common"?1:rarity==="uncommon"?2:rarity==="rare"?3:rarity==="legendary"?4:rarity==="mythic"?5:4;
     const affCount = affixCountFor(rarity);
+
+    let weaponCore = null;
+    let weaponStyle = undefined;
+    let weaponIcon = null;
+    if(type==="weapon"){
+      weaponCore = pick(["Gun","Lasergun","Cannon","Blade","Axe"]);
+      weaponStyle =
+        weaponCore === "Blade" ? "blade"
+        : weaponCore === "Axe" ? "axe"
+        : weaponCore === "Lasergun" ? "laser"
+        : weaponCore === "Cannon" ? "cannon"
+        : "gun";
+      const coreIcons = { Gun: "🔫", Lasergun: "⚡", Cannon: "💣", Blade: "⚔️", Axe: "🪓" };
+      weaponIcon = coreIcons[weaponCore] || pick(TYPE_ICONS.weapon);
+    }
+    const icon = type === "weapon" && weaponIcon ? weaponIcon : pick(TYPE_ICONS[type]);
 
     const base = {};
     if(type==="weapon"){
-      base.dmg = Math.round((7 + tier*4) * rand(0.95,1.18));
-      base.atk = +( (0.40 - tier*0.05) * rand(0.92,1.06) ).toFixed(3);
+      if(weaponStyle === "blade"){
+        base.dmg = Math.round((11 + Math.round(tier * 5.5)) * rand(0.95, 1.15));
+        base.atk = +((0.24 - tier * 0.032) * rand(0.92, 1.05)).toFixed(3);
+      } else if(weaponStyle === "axe"){
+        base.dmg = Math.round((15 + Math.round(tier * 6.5)) * rand(0.95, 1.12));
+        base.atk = +((0.27 - tier * 0.034) * rand(0.92, 1.05)).toFixed(3);
+      } else if(weaponStyle === "cannon"){
+        base.dmg = Math.round((10 + Math.round(tier * 5.2)) * rand(0.95, 1.15));
+        base.atk = +((0.52 - tier * 0.065) * rand(0.92, 1.05)).toFixed(3);
+      } else {
+        base.dmg = Math.round((7 + tier * 4) * rand(0.95, 1.18));
+        base.atk = +((0.40 - tier * 0.05) * rand(0.92, 1.06)).toFixed(3);
+      }
     } else if(type==="armor"){
       base.shield = Math.round((7 + tier*8) * rand(0.95,1.20));
       base.hp = Math.round((0 + tier*5) * rand(0.90,1.18));
@@ -1096,21 +1781,24 @@
       let v=randi(a.min,a.max);
       if(rarity==="rare") v=Math.round(v*1.10);
       if(rarity==="legendary") v=Math.round(v*1.25);
+      if(rarity==="mythic") v=Math.round(v*1.35);
       affixes.push({id:a.id,name:a.name,icon:a.icon,value:v,text:a.fmt(v)});
     }
 
     const prefixes=["Sturdy","Glinting","Razor","Ancient","Swift","Grim","Blessed","Arcane","Storm","Frost","Ember","Umbral","Gilded"];
     const suffixes=["of Sparks","of the Viper","of Dawn","of the Forge","of Echoes","of Hunger","of Resolve","of Velocity","of Mirrors","of Kings"];
-    const core = type==="weapon" ? pick(["Edge","Blade","Bow","Cannon","Spear","Axe"])
+    const core = type==="weapon" ? weaponCore
               : type==="armor"  ? pick(["Guard","Plate","Vest","Ward","Helm","Shell"])
               : type==="ring"   ? pick(["Band","Seal","Signet","Loop","Ring"])
               : pick(["Gem","Shard","Prism","Orb","Eye"]);
     let name = core;
     if(rarity!=="common"){
       name = `${pick(prefixes)} ${core}`;
-      if(rarity==="rare" || rarity==="legendary") name += ` ${pick(suffixes)}`;
+      if(rarity==="rare" || rarity==="legendary" || rarity==="mythic") name += ` ${pick(suffixes)}`;
     }
-    return { type, rarity, tier, icon, name, base, affixes };
+    const out = { type, rarity, tier, icon, name, base, affixes, gradeRevealed: false, bloodRedSteps: 0, modSlotsOpened: 0, scrapMods: [] };
+    if(type==="weapon") out.weaponStyle = weaponStyle;
+    return out;
   }
 
   /** Tier from item (1–4). Used for scrap value and balance; items store tier at creation. */
@@ -1118,6 +1806,7 @@
     if (!it) return 1;
     if (it.tier != null && it.tier >= 1 && it.tier <= 4) return it.tier;
     if (it.rarity === "set") return 4;
+    if (it.rarity === "mythic") return 5;
     return it.rarity === "common" ? 1 : it.rarity === "uncommon" ? 2 : it.rarity === "rare" ? 3 : 4;
   }
 
@@ -1160,7 +1849,7 @@
       const v = randi(a.min, a.max);
       affixes.push({ id: a.id, name: a.name, icon: a.icon, value: v, text: a.fmt(v) });
     }
-    return { type, rarity: "set", tier: 4, icon, name, base, affixes, setId: setDef.id, setName: setDef.name, setPiece: pieceKind };
+    return { type, rarity: "set", tier: 4, icon, name, base, affixes, setId: setDef.id, setName: setDef.name, setPiece: pieceKind, gradeRevealed: false, bloodRedSteps: 0, modSlotsOpened: 0, scrapMods: [] };
   }
 
   function itemScore(it){
@@ -1181,6 +1870,56 @@
       return (s1<=s2) ? "ring1" : "ring2";
     }
     return "weapon";
+  }
+
+  const LOOT_AUTOSCRAP_NODE_IDS = ["loot_left_2", "loot_right_2"];
+
+  function hasLootInferiorAutoScrap(){
+    for (const id of LOOT_AUTOSCRAP_NODE_IDS) {
+      if ((skillLevels[id] | 0) > 0) return true;
+    }
+    return false;
+  }
+
+  function bestItemScoreForSameLootType(type){
+    let best = -Infinity;
+    const bump = (it) => {
+      if (it) best = Math.max(best, itemScore(it));
+    };
+    if (type === "weapon") bump(equipped.weapon);
+    else if (type === "armor") bump(equipped.armor);
+    else if (type === "helmet") bump(equipped.head);
+    else if (type === "boots") bump(equipped.feet);
+    else if (type === "jewel") bump(equipped.jewel);
+    else if (type === "ring") {
+      bump(equipped.ring1);
+      bump(equipped.ring2);
+    } else return -Infinity;
+    for (const inv of inventory) {
+      if (inv && inv.type === type) bump(inv);
+    }
+    return best;
+  }
+
+  function shouldAutoScrapInferiorPickup(item){
+    if (!item || !hasLootInferiorAutoScrap()) return false;
+    const t = item.type;
+    if (t !== "weapon" && t !== "armor" && t !== "helmet" && t !== "boots" && t !== "jewel" && t !== "ring") return false;
+    const best = bestItemScoreForSameLootType(t);
+    if (best === -Infinity) return false;
+    return itemScore(item) < best;
+  }
+
+  /** Converts item to base scrap without using inventory; returns true if salvaged. */
+  function applyInferiorLootAutoScrap(item){
+    if (!shouldAutoScrapInferiorPickup(item)) return false;
+    const rar = item.rarity || "common";
+    const val = getScrapValue(item);
+    if (val <= 0) return false;
+    baseScrap[rar] = (baseScrap[rar] || 0) + val;
+    saveBaseScrap();
+    if (typeof updateAchievement === "function") updateAchievement("scrapper", 1);
+    return true;
   }
 
   // ========= Build computation =========
@@ -1255,6 +1994,25 @@
     if(eq.ring2) s.pickup += (eq.ring2.base?.pickup||0);
     if(eq.jewel) s.xpGainPct += (eq.jewel.base?.xp||0)/100;
 
+    const redBloodKnown = isIntelUnlocked("orders", "blood_red_analysis");
+    function applyRedBloodInfusions(it){
+      if (!redBloodKnown || !it || it.gradeRevealed !== true) return;
+      const cap = maxBloodUpgradesForGrade(it.grade | 0);
+      const steps = Math.min(it.bloodRedSteps | 0, cap);
+      if (steps <= 0) return;
+      const t = it.type;
+      if (t === "weapon") s.dmg += steps;
+      else if (t === "armor") s.maxShield += steps * 2;
+      else if (t === "ring" || t === "jewel" || t === "boots" || t === "helmet") s.maxHP += steps * 3;
+    }
+    applyRedBloodInfusions(eq.weapon);
+    applyRedBloodInfusions(eq.head);
+    applyRedBloodInfusions(eq.armor);
+    applyRedBloodInfusions(eq.feet);
+    applyRedBloodInfusions(eq.ring1);
+    applyRedBloodInfusions(eq.ring2);
+    applyRedBloodInfusions(eq.jewel);
+
     let dmgPct=0, asPct=0, msPct=0, regenPct=0, critAdd=0, critDmgPct=0;
     let splashPct=0, lsPct=0, slowPct=0, thornsPct=0, xpPct=0;
     let hpFlat=0, shieldFlat=0, pickupFlat=0, pierceAdd=0, lootInvulnSec=0, bloodPoolChancePct=0;
@@ -1300,6 +2058,46 @@
         }
       }
     }
+
+    const scrapAgg = { dmg: 0, dmgPct: 0, hpFlat: 0, shieldFlat: 0, regenPct: 0, critAdd: 0, critDmgPct: 0, splashPct: 0, lsPct: 0, asPct: 0, msPct: 0, pickupFlat: 0, xpPct: 0, thornsPct: 0, pierceAdd: 0 };
+    for (const it of items) {
+      ensureItemModSlotState(it);
+      if (!it.scrapMods.length) continue;
+      for (const bid of it.scrapMods) {
+        const d = getBloodScrapModDeltas(bid, it.type);
+        scrapAgg.dmg += d.dmg;
+        scrapAgg.dmgPct += d.dmgPct;
+        scrapAgg.hpFlat += d.hpFlat;
+        scrapAgg.shieldFlat += d.shieldFlat;
+        scrapAgg.regenPct += d.regenPct;
+        scrapAgg.critAdd += d.critAdd;
+        scrapAgg.critDmgPct += d.critDmgPct;
+        scrapAgg.splashPct += d.splashPct;
+        scrapAgg.lsPct += d.lsPct;
+        scrapAgg.asPct += d.asPct;
+        scrapAgg.msPct += d.msPct;
+        scrapAgg.pickupFlat += d.pickupFlat;
+        scrapAgg.xpPct += d.xpPct;
+        scrapAgg.thornsPct += d.thornsPct;
+        scrapAgg.pierceAdd += d.pierceAdd;
+      }
+      applyScrapSynergyBonusesToAgg(it.scrapMods, scrapAgg);
+    }
+    s.dmg += Math.round(scrapAgg.dmg);
+    dmgPct += scrapAgg.dmgPct;
+    hpFlat += scrapAgg.hpFlat;
+    shieldFlat += scrapAgg.shieldFlat;
+    regenPct += scrapAgg.regenPct;
+    critAdd += scrapAgg.critAdd;
+    critDmgPct += scrapAgg.critDmgPct;
+    splashPct += scrapAgg.splashPct;
+    lsPct += scrapAgg.lsPct;
+    asPct += scrapAgg.asPct;
+    msPct += scrapAgg.msPct;
+    pickupFlat += scrapAgg.pickupFlat;
+    xpPct += scrapAgg.xpPct;
+    thornsPct += scrapAgg.thornsPct;
+    pierceAdd += scrapAgg.pierceAdd;
 
     const setSlots = [eq.head, eq.ring1, eq.ring2, eq.jewel, eq.feet];
     const setCounts = {};
@@ -1395,6 +2193,8 @@
     } else player.shield=player.maxShield; // starting shield 100%
 
     player.dpsEst=estimateDPS(s);
+    const ws = equipped.weapon && equipped.weapon.weaponStyle;
+    player.weaponStyle = (ws === "blade" || ws === "axe" || ws === "laser" || ws === "cannon" || ws === "gun") ? ws : "gun";
   }
   function recomputeBuild(){ applyStatsToPlayer(computeStats(equipped)); }
 
@@ -1404,7 +2204,7 @@
     const type=map[slotKey]||"weapon";
     if(type==="weapon"){
       // Default starting weapon label when nothing is equipped
-      return {type:"weapon",rarity:"common",icon:"🔫",name:"Gun",base:{},affixes:[]};
+      return {type:"weapon",rarity:"common",icon:"🔫",name:"Gun",base:{},affixes:[],weaponStyle:"gun"};
     }
     if(type==="armor"){
       // Default starting armor label when nothing is equipped
@@ -1415,14 +2215,15 @@
   }
   function renderMini(label,slotKey,item){
     const it=item||previewItem(slotKey);
-    const c=item ? RAR[it.rarity].color : "rgba(255,255,255,.5)";
+    const c=item ? (RAR[it.rarity]?.color || "#9AA3AE") : "rgba(255,255,255,.5)";
+    const gHint = item && it.gradeRevealed === true ? ` • G${it.grade|0}` : (item ? " • G?" : "");
     const wrap=document.createElement("div");
     wrap.className="slotMini";
     wrap.innerHTML=`
       <div class="iconMini" style="border-color:${c}66; box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 26px ${c}30;">${it.icon}</div>
       <div class="slotMiniMain">
         <div class="slotMiniTitle"><span>${label}</span><span class="mono" style="color:${c};">${item?rarityLabel(it.rarity):"—"}</span></div>
-        <div class="slotMiniSub" title="${it.name}">${it.name}${it.affixes?.length?` • ${it.affixes.length} affix`:``}</div>
+        <div class="slotMiniSub" title="${it.name}">${it.name}${gHint}${it.affixes?.length?` • ${it.affixes.length} affix`:``}</div>
       </div>
     `;
     return wrap;
@@ -1467,6 +2268,7 @@
     wrap.querySelector(".comingSoonBtn").onclick = () => wrap.remove();
     wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
     overlay.appendChild(wrap);
+    scheduleTheoBaseTipIfNew("options_pod");
   }
 
   // ========= Intel System =========
@@ -1632,6 +2434,20 @@
         <p>The creatures exhibiting this blood type are significantly more dangerous. Enhanced strength, regeneration, and what appears to be primitive intelligence. They coordinate. They plan.</p>
         <p>Chemical analysis reveals a compound we've never seen before. It's not from this world.</p>
         <p><strong>URGENT:</strong> We need to understand this evolution before it spreads further. The fate of the mission — and possibly humanity — depends on it.</p>
+      `
+    },
+    {
+      id: "scrap_synergy_field_memo",
+      title: "Field memo: Armory etching",
+      meta: "UNOFFICIAL • Burn after reading",
+      icon: "🧩",
+      summary: "Rumours about mixing blood etchings on the same piece of kit.",
+      content: `
+        <p><strong>NOT ON OFFICIAL CHANNELS:</strong></p>
+        <p>When you etch <em>different</em> stored blood types into the same piece of kit, the rig sometimes behaves… better than the sum of the parts. Lab calls it "humor interference."</p>
+        <p><strong>Whisper:</strong> hot red and cold blue on the same weapon have produced weirdly stable groups in tests. Green plus blue did something nasty to crits. Don't ask how we know.</p>
+        <p>Command does <em>not</em> endorse experimentation. Full reaction tables are not in this briefing — you'll have to discover pairings yourself. Recipes may surface from missions or the lab later.</p>
+        <p style="margin-top:12px;color:var(--muted);font-style:italic;">Armory: <strong>scrap</strong> opens mod <strong>slots</strong> on each item (O). <strong>Blood</strong> (ml) sets the <strong>property</strong> in an open empty slot ([). Scientist — <strong>Sanguine Mod Channels</strong> is the max slots you may open (Red blood + tokens per level); rarity still caps (uncommon 1 … mythic/set 4). Grade forge <strong>G</strong> uses lab Obsidian/Crimson blood.</p>
       `
     },
     {
@@ -1816,6 +2632,7 @@
 
     ovBody.innerHTML = "";
     ovBody.appendChild(wrap);
+    scheduleTheoBaseTipIfNew("intel");
   }
 
   function renderIntelGrid(container){
@@ -1921,6 +2738,7 @@
   let dismantleQueue = [];
   let armorySelectedPanel = "inventory"; // "stash", "inventory", "dismantle"
   let armorySelectedIndex = 0;
+  let armoryModBloodPickIndex = 0;
   let armoryConfirmOpen = false;
   let armoryConfirmIndex = 0; // 0 = confirm, 1 = back
   let armoryKeyHandler = null;
@@ -1932,7 +2750,7 @@
     if(overlayCard) overlayCard.classList.remove("mainMenuActive");
     if(ovHead) ovHead.style.display="";
     ovTitle.textContent="Armory";
-    ovSub.innerHTML=`<span style="color:var(--muted);">Left-click → Stash | Right-click → Dismantle | E/Q keys</span>`;
+    ovSub.innerHTML=`<span style="color:var(--muted);">Stash | Inv | Dismantle: click / E Q WASD • <b>X</b> analyze grade • <b>G</b> grade +10 (forge, Obs/Crim) • <b>O</b> open mod slot (scrap) • <b>R</b> red infuse • <b>]</b> pick blood • <b>[</b> etch blood into open slot • <b>T</b> trade scrap</span>`;
     // Disable browser context menu on entire armory
     ovBody.oncontextmenu = (e) => e.preventDefault();
     ovBtns.innerHTML="";
@@ -2069,10 +2887,11 @@
     refreshArmoryUI();
     bindArmoryCells();
     bindArmoryKeyboard();
+    scheduleTheoBaseTipIfNew("armory");
   }
 
   function getTotalDismantleScrap(){
-    const totals = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
+    const totals = { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 };
     for(const item of dismantleQueue){
       const rar = item.rarity || "common";
       totals[rar] += getScrapValue(item);
@@ -2081,6 +2900,7 @@
   }
 
   function refreshArmoryUI(){
+    tryUnlockScrapSynergyMemoFromFieldIntel();
     // Update stash grid
     const stashGrid = document.getElementById("armoryStashGrid");
     if(stashGrid){
@@ -2158,9 +2978,53 @@
       if(hasBase){
         let html = `<div style="font-weight:700; margin-bottom:4px;">Base Scrap</div>`;
         html += Object.entries(baseScrap).filter(([r,v])=>v>0).map(([r,v])=>`<div class="scrapLine" style="color:${RAR[r]?.color||'#fff'};">${RAR[r]?.name||r}: ${v}</div>`).join("");
+        const sel = getArmorySelectedItem();
+        const ids = getKnownBloodIdsForScrapMods();
+        const curBlood = ids.length ? (ids[Math.min(Math.max(0, armoryModBloodPickIndex), ids.length - 1)] || "?") : "—";
+        const curNm = (typeof window.getBloodType === "function" && window.getBloodType(curBlood)?.name) || curBlood;
+        let modLine = `<div style="margin-top:10px;font-size:11px;line-height:1.5;color:rgba(234,242,255,.72);max-width:300px;">`;
+        modLine += `<b>Mods:</b> <b>O</b> open slot (scrap) • <b>]</b> blood • <b>[</b> etch<br/>`;
+        if (sel) {
+          ensureItemModSlotState(sel);
+          const maxS = getMaxBloodModSlotsForItem(sel);
+          const openCost = getNextModSlotOpenScrapCost(sel);
+          const mlNext = getNextBloodModMlNeed(sel);
+          const op = sel.modSlotsOpened | 0;
+          if (maxS <= 0) {
+            if (getRarityBloodModSlotCap(sel.rarity || "common") <= 0) modLine += `<span style="color:var(--muted);">Common gear: no mod slots</span>`;
+            else modLine += `<span style="color:var(--muted);">Scientist → Sanguine Mod Channels (${SCI_SANGUINE_MOD_CHANNELS_RED_ML} ml Red/lv)</span>`;
+          }
+          else if (sel.gradeRevealed !== true) modLine += `<span style="color:var(--muted);">Analyze grade (X) first</span>`;
+          else {
+            modLine += `Open <b>${op}</b>/${maxS} • Filled <b>${sel.scrapMods.length}</b><br/>`;
+            if (openCost) modLine += `Next <b>O</b>: ${openCost.amount} ${RAR[openCost.scrapRarity]?.name || openCost.scrapRarity} scrap`;
+            else if (op >= maxS && sel.scrapMods.length >= op) modLine += `<span style="color:var(--xp);">Slots maxed & filled</span>`;
+            else if (op >= maxS) modLine += `<span style="color:var(--muted);">All slots open — etch with [</span>`;
+            if (mlNext != null) modLine += `${openCost ? " • " : ""}Next <b>[</b>: <b>${mlNext}</b> ml blood`;
+          }
+        } else modLine += `<span style="color:var(--muted);">Select an item</span>`;
+        modLine += `<br/><span style="color:var(--muted);">T: 10C→1U, 8U→1R, 6R→1L, 4L→1M</span></div>`;
+        html += modLine;
         scrapPanel.innerHTML = html;
       } else {
-        scrapPanel.innerHTML = `<div style="color:var(--muted);">No scrap stored</div>`;
+        const sel = getArmorySelectedItem();
+        const ids = getKnownBloodIdsForScrapMods();
+        const curBlood = ids.length ? (ids[Math.min(Math.max(0, armoryModBloodPickIndex), ids.length - 1)] || "?") : "—";
+        const curNm = (typeof window.getBloodType === "function" && window.getBloodType(curBlood)?.name) || curBlood;
+        let modLine = `<div style="font-size:11px;line-height:1.5;color:rgba(234,242,255,.72);max-width:300px;margin-top:4px;">`;
+        modLine += `<b>Mods:</b> O open (scrap) • ] <span style="color:#7ecbff;">${curNm}</span> • [ etch • T trade<br/>`;
+        if (sel && sel.gradeRevealed === true) {
+          ensureItemModSlotState(sel);
+          const maxS = getMaxBloodModSlotsForItem(sel);
+          const oc = getNextModSlotOpenScrapCost(sel);
+          const mlN = getNextBloodModMlNeed(sel);
+          if (maxS > 0) {
+            if (oc) modLine += `<br/>Next O: ${oc.amount} ${oc.scrapRarity} scrap`;
+            if (mlN != null) modLine += `${oc ? " • " : "<br/>"}Next [: ${mlN} ml`;
+          }
+        }
+        modLine += `</div>`;
+        scrapPanel.innerHTML = `<div style="color:var(--muted);">No scrap stored</div>` + modLine;
       }
     }
 
@@ -2359,6 +3223,166 @@
     }
   }
 
+  function getArmorySelectedItem(){
+    if (armorySelectedPanel === "stash") return stash[armorySelectedIndex] || null;
+    if (armorySelectedPanel === "inventory") return inventory[armorySelectedIndex] || null;
+    if (armorySelectedPanel === "dismantle") return dismantleQueue[armorySelectedIndex] || null;
+    return null;
+  }
+  function persistArmoryItemSlotAfterMutate(){
+    saveInventory();
+    saveStash();
+  }
+  function tryArmoryAnalyzeGrade(){
+    const item = getArmorySelectedItem();
+    if (!item) { showSimpleToast("No item selected"); return; }
+    if (item.gradeRevealed === true) { showSimpleToast("Grade already analyzed"); return; }
+    item.grade = rollGradeForRarity(item.rarity || "common");
+    item.gradeRevealed = true;
+    item.bloodRedSteps = Math.min(item.bloodRedSteps | 0, maxBloodUpgradesForGrade(item.grade));
+    persistArmoryItemSlotAfterMutate();
+    showSimpleToast(`Grade analyzed: ${item.grade}`);
+    refreshArmoryUI();
+    bindArmoryCells();
+  }
+  function tryArmoryForgeGrade(){
+    if (!hasBloodGradeForgeUnlocked()) { showSimpleToast("Need both Looter and Scientist top nodes (Blood Echo Forge)"); return; }
+    const item = getArmorySelectedItem();
+    if (!item) { showSimpleToast("No item selected"); return; }
+    if (item.gradeRevealed !== true) { showSimpleToast("Analyze grade first (X)"); return; }
+    const cap = getGradeCapForRarity(item.rarity || "common");
+    if ((item.grade | 0) >= cap) { showSimpleToast("Already at max grade for this rarity"); return; }
+    const needObs = 70, needCrim = 100;
+    const obs = baseBloodMl["obsidian"] | 0, crim = baseBloodMl["crimson"] | 0;
+    if (obs < needObs && crim < needCrim) {
+      showSimpleToast(`Need ${needObs} ml Obsidian or ${needCrim} ml Crimson (stored lab blood)`);
+      return;
+    }
+    if (obs >= needObs) baseBloodMl["obsidian"] = obs - needObs;
+    else baseBloodMl["crimson"] = crim - needCrim;
+    try { localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl)); } catch (err) {}
+    item.grade = Math.min(cap, (item.grade | 0) + 10);
+    item.bloodRedSteps = Math.min(item.bloodRedSteps | 0, maxBloodUpgradesForGrade(item.grade));
+    persistArmoryItemSlotAfterMutate();
+    showSimpleToast(`Grade +10 (now ${item.grade})`);
+    refreshArmoryUI();
+    bindArmoryCells();
+  }
+  function tryArmoryRedInfuse(){
+    const item = getArmorySelectedItem();
+    if (!item) { showSimpleToast("No item selected"); return; }
+    if (!isIntelUnlocked("orders", "blood_red_analysis")) { showSimpleToast("Unlock Red blood analysis in Orders intel first"); return; }
+    if (item.gradeRevealed !== true) { showSimpleToast("Analyze grade first (X)"); return; }
+    const cap = maxBloodUpgradesForGrade(item.grade | 0);
+    const used = item.bloodRedSteps | 0;
+    if (used >= cap) { showSimpleToast("No infusion slots left (raise grade for more steps)"); return; }
+    const cost = 45;
+    if ((baseBloodMl["red"] | 0) < cost) { showSimpleToast(`Need ${cost} ml Red blood (stored)`); return; }
+    baseBloodMl["red"] = (baseBloodMl["red"] | 0) - cost;
+    try { localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl)); } catch (err) {}
+    item.bloodRedSteps = used + 1;
+    persistArmoryItemSlotAfterMutate();
+    showSimpleToast("Red infusion +1");
+    refreshArmoryUI();
+    bindArmoryCells();
+  }
+
+  function tryArmoryScrapTierUp(){
+    for (const step of SCRAP_TIER_UP) {
+      const have = baseScrap[step.from] | 0;
+      if (have >= step.need) {
+        baseScrap[step.from] = have - step.need;
+        baseScrap[step.to] = (baseScrap[step.to] | 0) + 1;
+        saveBaseScrap();
+        showSimpleToast(`Traded ${step.need} ${RAR[step.from]?.name || step.from} → 1 ${RAR[step.to]?.name || step.to}`);
+        refreshArmoryUI();
+        return;
+      }
+    }
+    showSimpleToast("Not enough lower-tier scrap for any trade-up (see ratios: 10→1, 8→1, 6→1, 4→1)");
+  }
+  function tryArmoryOpenModSlot(){
+    const item = getArmorySelectedItem();
+    if (!item) { showSimpleToast("No item selected"); return; }
+    if (item.gradeRevealed !== true) { showSimpleToast("Analyze grade first (X)"); return; }
+    ensureItemModSlotState(item);
+    const maxS = getMaxBloodModSlotsForItem(item);
+    if (maxS <= 0) {
+      if (getRarityBloodModSlotCap(item.rarity || "common") <= 0) showSimpleToast("Mod slots require uncommon or higher gear");
+      else showSimpleToast(`Scientist: Sanguine Mod Channels — ${SCI_SANGUINE_MOD_CHANNELS_RED_ML} ml Red + tokens per level`);
+      return;
+    }
+    const cost = getNextModSlotOpenScrapCost(item);
+    if (!cost) {
+      if ((item.modSlotsOpened | 0) >= maxS) showSimpleToast("All mod slots opened (max for Scientist + rarity)");
+      else showSimpleToast("Cannot open another mod slot");
+      return;
+    }
+    const have = baseScrap[cost.scrapRarity] | 0;
+    if (have < cost.amount) {
+      showSimpleToast(`Need ${cost.amount} ${RAR[cost.scrapRarity]?.name || cost.scrapRarity} scrap to open next slot (T trade-up)`);
+      return;
+    }
+    baseScrap[cost.scrapRarity] = have - cost.amount;
+    saveBaseScrap();
+    item.modSlotsOpened = (item.modSlotsOpened | 0) + 1;
+    ensureItemModSlotState(item);
+    persistArmoryItemSlotAfterMutate();
+    showSimpleToast(`Mod slot opened (${item.modSlotsOpened}/${maxS}) — use [ to etch blood`);
+    refreshArmoryUI();
+    bindArmoryCells();
+  }
+  function tryArmoryCycleModBlood(){
+    const ids = getKnownBloodIdsForScrapMods();
+    if (!ids.length) {
+      showSimpleToast("No blood available for mods (field intel / 40+ ml lab blood)");
+      return;
+    }
+    armoryModBloodPickIndex = (armoryModBloodPickIndex + 1) % ids.length;
+    const id = ids[armoryModBloodPickIndex];
+    const nm = (typeof window.getBloodType === "function" && window.getBloodType(id)?.name) || id;
+    showSimpleToast(`Next mod blood: ${nm} (] again to cycle)`);
+  }
+  function tryArmoryApplyScrapBloodMod(){
+    const item = getArmorySelectedItem();
+    if (!item) { showSimpleToast("No item selected"); return; }
+    if (item.gradeRevealed !== true) { showSimpleToast("Analyze grade first (X)"); return; }
+    ensureItemModSlotState(item);
+    const maxS = getMaxBloodModSlotsForItem(item);
+    if (maxS <= 0) {
+      if (getRarityBloodModSlotCap(item.rarity || "common") <= 0) showSimpleToast("Blood mods require uncommon or higher gear");
+      else showSimpleToast(`Scientist Core: Sanguine Mod Channels — ${SCI_SANGUINE_MOD_CHANNELS_RED_ML} ml Red + tokens per level`);
+      return;
+    }
+    const opened = item.modSlotsOpened | 0;
+    if (item.scrapMods.length >= opened) {
+      if (opened >= maxS) showSimpleToast("All mod slots full");
+      else showSimpleToast("Open a mod slot with scrap (O)");
+      return;
+    }
+    const mlNeed = getNextBloodModMlNeed(item);
+    if (mlNeed == null) { showSimpleToast("Cannot add mod"); return; }
+    const ids = getKnownBloodIdsForScrapMods();
+    if (!ids.length) { showSimpleToast("No blood types unlocked for modding"); return; }
+    const idx = Math.min(Math.max(0, armoryModBloodPickIndex), ids.length - 1);
+    const bloodId = ids[idx];
+    if ((baseBloodMl[bloodId] | 0) < mlNeed) {
+      showSimpleToast(`Need ${mlNeed} ml ${(window.getBloodType && window.getBloodType(bloodId)?.name) || bloodId}`);
+      return;
+    }
+    baseBloodMl[bloodId] = (baseBloodMl[bloodId] | 0) - mlNeed;
+    try { localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl)); } catch (e) {}
+    item.scrapMods.push(bloodId);
+    registerNewScrapSynergiesFromMods(item.scrapMods);
+    tryUnlockScrapSynergyMemoFromFieldIntel();
+    persistArmoryItemSlotAfterMutate();
+    recomputeBuild();
+    const nm = (typeof window.getBloodType === "function" && window.getBloodType(bloodId)?.name) || bloodId;
+    showSimpleToast(`Blood mod etched: ${nm} (${item.scrapMods.length}/${item.modSlotsOpened | 0} filled)`);
+    refreshArmoryUI();
+    bindArmoryCells();
+  }
+
   function bindArmoryKeyboard(){
     if(armoryKeyHandler) document.removeEventListener("keydown", armoryKeyHandler);
     
@@ -2466,6 +3490,27 @@
             } else showSimpleToast("Dismantle queue full");
           }
         }
+      } else if(k === "x"){
+        e.preventDefault();
+        tryArmoryAnalyzeGrade();
+      } else if(k === "g"){
+        e.preventDefault();
+        tryArmoryForgeGrade();
+      } else if(k === "o"){
+        e.preventDefault();
+        tryArmoryOpenModSlot();
+      } else if(k === "r"){
+        e.preventDefault();
+        tryArmoryRedInfuse();
+      } else if(k === "]"){
+        e.preventDefault();
+        tryArmoryCycleModBlood();
+      } else if(k === "["){
+        e.preventDefault();
+        tryArmoryApplyScrapBloodMod();
+      } else if(k === "t"){
+        e.preventDefault();
+        tryArmoryScrapTierUp();
       }
     };
     
@@ -2572,7 +3617,7 @@
     if(!data) return;
     const overlay = document.getElementById("overlay");
     const bloodOrder = ["common","uncommon","rare","legendary"];
-    const lootOrder = ["common","uncommon","rare","legendary","set"];
+    const lootOrder = ["common","uncommon","rare","legendary","mythic","set"];
     const bloodRows = bloodOrder.filter(t=>(data.bloodMlByType[t]||0)>0).map(t=>{
       const label = RAR[t]?.name || t;
       const color = RAR[t]?.color || "rgba(255,255,255,.8)";
@@ -2623,6 +3668,7 @@
         <div style="min-width:0;">
           <div style="font-weight:950; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:${c};">${textOverride ?? it.name}</div>
           <div style="font-size:12px;color:rgba(234,242,255,.70); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.type.toUpperCase()} • ${aff}</div>
+          <div style="font-size:11px;color:rgba(234,242,255,.55);">${formatItemGradeLine(it)}</div>
         </div>
       </div>
       <div style="font-weight:950;padding:6px 10px;border-radius:999px;border:1px solid ${c}66;background: rgba(0,0,0,.22);font-size:12px;letter-spacing:.6px;color:${c};">${rarityLabel(it.rarity)}</div>
@@ -2666,7 +3712,7 @@
     const wrap=document.createElement("div");
     wrap.className="compareCard" + (isCurrentItem ? " compareSelected" : " compareBlur");
     const it=item||previewItem(slotKey);
-    const c=item ? RAR[it.rarity].color : "rgba(255,255,255,.55)";
+    const c=item ? (RAR[it.rarity]?.color || "#9AA3AE") : "rgba(255,255,255,.55)";
     const rarTxt=item ? rarityLabel(it.rarity) : "—";
     const baseLine = baseLineFor(it);
 
@@ -2705,11 +3751,20 @@
         <div class="cmpText">
           <div style="font-weight:1000; color:${nameColor}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.name}</div>
           <div class="cmpLine" ${isCurrentItem ? 'style="color:var(--muted);"' : ''}>${it.type.toUpperCase()} • ${baseLine}</div>
+          <div class="cmpLine" style="font-size:12px;color:var(--muted);">${formatItemGradeLine(it)}</div>
+          <div class="cmpLine" style="font-size:11px;color:var(--muted);">${formatScrapModsLine(it)}</div>
           <div class="pillRow">${affHTML}</div>
           ${diffHTML}
         </div>
       </div>
     `;
+    const blk = item && !isCurrentItem ? itemGradeEquipBlockReason(item) : "";
+    if (blk) {
+      const note = document.createElement("div");
+      note.className = "cmpDiffs";
+      note.innerHTML = `<div class="cmpDiffLine cmpDiffBad">${blk}</div>`;
+      wrap.querySelector(".cmpText").appendChild(note);
+    }
     return wrap;
   }
   function getStatDiffs(sA, sB){
@@ -2753,6 +3808,41 @@
     }
     return rows;
   }
+
+  function itemFingerprint(it){
+    if (!it) return "__empty__";
+    const aff = (it.affixes || []).map(a => `${a.id}:${a.value}`).slice().sort().join("|");
+    const base = JSON.stringify(it.base || {});
+    const setPart = it.setId ? `${it.setId}:${it.setPiece || ""}` : "";
+    return [it.type, it.rarity, it.name || "", base, aff, setPart, it.weaponStyle || ""].join("§");
+  }
+
+  function applyWeaponBlinkSuppressionAfterInvCompare(pending, userEquippedNew){
+    if (!pending?.fromInventory) return;
+    const w = pending.newItem;
+    if (!w || w.type !== "weapon" || pending.slotKey !== "weapon") return;
+    const invFp = itemFingerprint(w);
+    if (userEquippedNew) delete weaponBlinkSuppressed[invFp];
+    else weaponBlinkSuppressed[invFp] = itemFingerprint(equipped.weapon);
+  }
+
+  /** Inventory grid: subtle blink for weapons that might upgrade current loadout (click to compare). */
+  function inventoryWeaponShouldBlinkHint(item){
+    if (!item || item.type !== "weapon") return false;
+    const slotKey = "weapon";
+    const sA = computeStats(equipped);
+    const sB = computeStats({ ...equipped, [slotKey]: item });
+    const diffs = getStatDiffs(sA, sB);
+    if (diffs.length === 0) return false;
+    if (diffs.every(d => !d.goodB)) return false;
+    if (!diffs.some(d => d.goodB)) return false;
+    const invFp = itemFingerprint(item);
+    const eqFp = itemFingerprint(equipped.weapon);
+    const suppressedEqFp = weaponBlinkSuppressed[invFp];
+    if (suppressedEqFp != null && suppressedEqFp === eqFp) return false;
+    return true;
+  }
+
   function renderStatsTable(sA,sB){
     const wrap=document.createElement("div");
     wrap.className="statsTable";
@@ -2873,6 +3963,7 @@
     if(r==="uncommon"){beep({freq:660,dur:0.05,type:"sine",gain:0.045}); beep({freq:990,dur:0.06,type:"sine",gain:0.04, slide:0.75});}
     if(r==="rare"){beep({freq:740,dur:0.06,type:"square",gain:0.05}); beep({freq:1110,dur:0.08,type:"triangle",gain:0.05});}
     if(r==="legendary"){powerUpLegendary();}
+    if(r==="mythic"){powerUpMythic();}
   }
 
   function acceptCompare(equipNew, discardNew=false){
@@ -2884,6 +3975,11 @@
 
     if (equipNew) {
       const it = pendingLoot.newItem;
+      const block = itemGradeEquipBlockReason(it);
+      if (block) {
+        showSimpleToast(block);
+        return;
+      }
       const currentItem = pendingLoot.currentItem;
       if (fromInv) {
         removeFromInventory(pendingLoot.inventoryIndex);
@@ -2901,7 +3997,8 @@
       saveEquipped();
       if (!fromInv) {
         showToast(it);
-        if (it.rarity === "legendary") { spawnLegendaryBurst(player.x, player.y, false); powerUpLegendary(); }
+        if (it.rarity === "mythic") { spawnLegendaryBurst(player.x, player.y, false); powerUpMythic(); }
+        else if (it.rarity === "legendary") { spawnLegendaryBurst(player.x, player.y, false); powerUpLegendary(); }
         else beepLoot(it.rarity);
       }
       recomputeBuild();
@@ -2915,10 +4012,12 @@
         } else if (!discardNew) {
           beep({ freq: 420, dur: 0.05, type: "sine", gain: 0.03 });
         }
-      } else if (!discardNew) {
-        beep({ freq: 420, dur: 0.05, type: "sine", gain: 0.03 });
+      } else {
+        if (!discardNew) beep({ freq: 420, dur: 0.05, type: "sine", gain: 0.03 });
       }
     }
+
+    if (fromInv) applyWeaponBlinkSuppressionAfterInvCompare(pendingLoot, equipNew);
 
     // Always grant full invuln after confirming (equip or discard), so we don't get one-shot in a pile of loot
     const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
@@ -2937,6 +4036,8 @@
       // Came from inventory - restore inventory overlay
       if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
       overlay.classList.add("hidden");
+      renderInventoryUI();
+      bindInventoryDragDrop();
       // Keep paused state as it was (inventory keeps game paused if running)
     } else {
       // Came from loot drop during game - hide overlay and resume
@@ -2963,6 +4064,7 @@
       player.invuln = Math.max(player.invuln, invulnDur);
       lootPickupCooldown = 0;
     }
+    if (fromInv) applyWeaponBlinkSuppressionAfterInvCompare(pendingLoot, false);
     pendingLoot = null;
     inCompare = false;
     compareLeftCardRef = null;
@@ -2974,6 +4076,8 @@
       // Came from inventory - restore inventory overlay
       if (inventoryOverlayEl) inventoryOverlayEl.classList.remove("hidden");
       overlay.classList.add("hidden");
+      renderInventoryUI();
+      bindInventoryDragDrop();
       // Keep paused state as it was
     } else {
       // Came from loot drop during game - hide overlay and resume
@@ -2995,6 +4099,7 @@
       renderInventoryUI();
       bindInventoryDragDrop();
     } else {
+      hideInventoryScrapConfirm();
       const tooltipEl = document.getElementById("inventoryTooltip");
       if (tooltipEl) tooltipEl.classList.add("hidden");
       if (running) {
@@ -3018,7 +4123,9 @@
   function canItemGoInSlot(item, slotKey){
     if (!item) return false;
     const accept = getSlotAcceptTypes(slotKey);
-    return accept.length === 0 || accept.includes(item.type);
+    if (!(accept.length === 0 || accept.includes(item.type))) return false;
+    if (itemGradeEquipBlockReason(item)) return false;
+    return true;
   }
 
   function buildInventoryItemTooltipContent(item, slotKey, isEquipped = false){
@@ -3069,6 +4176,8 @@
         <div class="cmpIcon" style="${iconStyle}">${item.icon}</div>
         <div class="cmpText">
           <div class="cmpLine" ${isEquipped ? 'style="color:var(--muted);"' : ''}>${item.type.toUpperCase()} • ${baseLine}</div>
+          <div class="cmpLine" style="font-size:12px;color:var(--muted);">${formatItemGradeLine(item)}</div>
+          <div class="cmpLine" style="font-size:11px;color:var(--muted);">${formatScrapModsLine(item)}</div>
           <div class="pillRow">${affHTML}</div>
           ${diffHTML}
         </div>
@@ -3087,7 +4196,7 @@
       const hasRunScrap = Object.values(runScrap).some(v => v > 0);
       if (hasRunScrap) {
         scrapHtml = `<div class="invStatTitle" style="margin-top:14px;">Run scrap</div><div class="invStatList">`;
-        for (const rar of ["common","uncommon","rare","legendary","set"]) {
+        for (const rar of ["common","uncommon","rare","legendary","mythic","set"]) {
           if (runScrap[rar] > 0) {
             const col = RAR[rar]?.color || "#9AA3AE";
             scrapHtml += `<div class="invStatRow"><span class="invStatLabel" style="color:${col};">${RAR[rar]?.name||rar}</span><span class="invStatVal">${runScrap[rar]}</span></div>`;
@@ -3122,12 +4231,154 @@
         const c = RAR[item.rarity]?.color || "#9AA3AE";
         cell.innerHTML = `<div class="invSlotIcon" style="border-color:${c}66;">${item.icon || "?"}</div>`;
         cell.title = item.name || "";
+        if (inventoryWeaponShouldBlinkHint(item)) cell.classList.add("invBlinkHint");
       }
       inventoryGridEl.appendChild(cell);
     }
   }
 
   let inventoryDragSource = null;
+  let pendingInventoryScrap = null;
+  let inventoryScrapConfirmOpen = false;
+
+  const INVENTORY_SCRAP_HINT_DEFAULT = "Drop item to scrap";
+
+  function invScrapEscapeHtml(s){
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /** English countability: exactly 1 → "scrap", otherwise → "scraps" (0, 2, 3, …). */
+  function invScrapUnitWord(count){
+    const n = Number(count);
+    const c = Number.isFinite(n) ? Math.trunc(n) : 0;
+    return c === 1 ? "scrap" : "scraps";
+  }
+
+  function invScrapReceivePhrase(val, rname, col){
+    const n = Number(val);
+    const count = Number.isFinite(n) ? Math.trunc(n) : 0;
+    const rn = invScrapEscapeHtml(rname);
+    return `(Receive ${count} <span style="color:${col};font-weight:700;">${rn}</span> ${invScrapUnitWord(count)})`;
+  }
+
+  function resetInventoryScrapDropHint(){
+    const h = document.getElementById("inventoryScrapHint");
+    if (!h) return;
+    h.textContent = INVENTORY_SCRAP_HINT_DEFAULT;
+    h.classList.remove("invScrapHintPreview");
+  }
+
+  function setInventoryScrapDropHintFromItem(item){
+    const h = document.getElementById("inventoryScrapHint");
+    if (!h || !item) return;
+    const val = getScrapValue(item);
+    const rar = item.rarity || "common";
+    const rname = RAR[rar]?.name || rar;
+    const col = RAR[rar]?.color || "#fff";
+    const name = invScrapEscapeHtml(String(item.name || "item"));
+    h.innerHTML = `Scrap <span style="color:${col};font-weight:700;">${name}</span>? ${invScrapReceivePhrase(val, rname, col)}`;
+    h.classList.add("invScrapHintPreview");
+  }
+
+  function hideInventoryScrapConfirm(){
+    pendingInventoryScrap = null;
+    inventoryScrapConfirmOpen = false;
+    const el = document.getElementById("inventoryScrapConfirm");
+    if (el) {
+      el.onclick = null;
+      el.classList.add("hidden");
+      el.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function showInventoryScrapConfirm(item, scrapMeta){
+    if (!item || !scrapMeta) return;
+    const el = document.getElementById("inventoryScrapConfirm");
+    const titleEl = document.getElementById("inventoryScrapConfirmTitle");
+    const bodyEl = document.getElementById("inventoryScrapConfirmBody");
+    const yesBtn = document.getElementById("inventoryScrapConfirmYes");
+    const noBtn = document.getElementById("inventoryScrapConfirmNo");
+    const equippedWarnEl = document.getElementById("inventoryScrapEquippedWarn");
+    if (!el || !titleEl || !bodyEl || !yesBtn || !noBtn) return;
+    const tt = document.getElementById("inventoryTooltip");
+    if (tt) tt.classList.add("hidden");
+    pendingInventoryScrap = { item, ...scrapMeta };
+    inventoryScrapConfirmOpen = true;
+    const rar = item.rarity || "common";
+    const val = getScrapValue(item);
+    const rname = RAR[rar]?.name || rar;
+    const col = RAR[rar]?.color || "#fff";
+    const dispName = invScrapEscapeHtml(String(item.name || "item"));
+    titleEl.className = "invScrapConfirmTitle invScrapConfirmTitle--compact";
+    titleEl.innerHTML = `Scrap <span style="color:${col};font-weight:800;">${dispName}</span>?`;
+    bodyEl.className = "invScrapConfirmBody invScrapConfirmBody--compact";
+    const scrapParen = invScrapReceivePhrase(val, rname, col);
+    bodyEl.innerHTML =
+      scrapMeta.kind === "equipment"
+        ? `<span class="invScrapConfirmUnequip">Unequips and destroys.</span>${scrapParen}`
+        : scrapParen;
+    if (equippedWarnEl) {
+      if (scrapMeta.kind === "equipment") {
+        equippedWarnEl.classList.remove("hidden");
+        equippedWarnEl.setAttribute("role", "img");
+        equippedWarnEl.setAttribute("aria-label", "Warning: this unequips your character");
+      } else {
+        equippedWarnEl.classList.add("hidden");
+        equippedWarnEl.removeAttribute("role");
+        equippedWarnEl.removeAttribute("aria-label");
+      }
+    }
+    el.classList.remove("hidden");
+    el.setAttribute("aria-hidden", "false");
+    el.onclick = (ev) => { if (ev.target === el) hideInventoryScrapConfirm(); };
+    yesBtn.onclick = () => { executeInventoryScrap(); };
+    noBtn.onclick = () => { hideInventoryScrapConfirm(); };
+  }
+
+  function executeInventoryScrap(){
+    if (!pendingInventoryScrap) return;
+    const { item, kind } = pendingInventoryScrap;
+    if (kind === "inventory") {
+      let idx = pendingInventoryScrap.invIndex;
+      if (inventory[idx] !== item) {
+        idx = inventory.indexOf(item);
+        if (idx < 0) {
+          showSimpleToast("Item no longer in inventory");
+          hideInventoryScrapConfirm();
+          return;
+        }
+      }
+      removeFromInventory(idx);
+    } else if (kind === "equipment") {
+      const slotKey = pendingInventoryScrap.slotKey;
+      if (equipped[slotKey] !== item) {
+        showSimpleToast("Item no longer equipped");
+        hideInventoryScrapConfirm();
+        return;
+      }
+      equipped[slotKey] = null;
+      saveEquipped();
+    } else {
+      hideInventoryScrapConfirm();
+      return;
+    }
+    const rar = item.rarity || "common";
+    baseScrap[rar] = (baseScrap[rar] || 0) + getScrapValue(item);
+    saveBaseScrap();
+    updateAchievement("scrapper", 1);
+    beep({ freq: 440, dur: 0.12, type: "triangle", gain: 0.1 });
+    showSimpleToast("Scrapped — added to base scrap");
+    hideInventoryScrapConfirm();
+    recomputeBuild();
+    renderEquipMini();
+    renderInventoryUI();
+    bindInventoryDragDrop();
+  }
+
   function bindInventoryDragDrop(){
     if (!inventoryFigureEl || !inventoryGridEl) return;
     const slotKeys = ["head", "jewel", "armor", "weapon", "ring1", "ring2", "feet"];
@@ -3137,6 +4388,7 @@
     function clearDragState(){
       inventoryDragSource = null;
       document.body.classList.remove("invDragging");
+      resetInventoryScrapDropHint();
     }
 
     function onDragStart(source, item, sourceType, sourceIndex){
@@ -3267,10 +4519,66 @@
         if (it) { e.dataTransfer.setData("text/plain", "inv-" + idx); e.dataTransfer.effectAllowed = "move"; onDragStart(cell, it, "inventory", idx); }
       };
     });
+
+    const scrapDropEl = document.getElementById("inventoryScrapDrop");
+    if (scrapDropEl) {
+      scrapDropEl.ondragover = (e) => {
+        e.preventDefault();
+        if (inventoryDragSource && (inventoryDragSource.sourceType === "inventory" || inventoryDragSource.sourceType === "equipment")) {
+          scrapDropEl.classList.add("invDropTarget");
+          setInventoryScrapDropHintFromItem(inventoryDragSource.item);
+        }
+      };
+      scrapDropEl.ondragleave = () => {
+        scrapDropEl.classList.remove("invDropTarget");
+        resetInventoryScrapDropHint();
+      };
+      scrapDropEl.ondrop = (e) => {
+        e.preventDefault();
+        scrapDropEl.classList.remove("invDropTarget");
+        resetInventoryScrapDropHint();
+        if (!inventoryDragSource) return;
+        const { item, sourceType, sourceIndex } = inventoryDragSource;
+        if (sourceType !== "inventory" && sourceType !== "equipment") return;
+        clearDragState();
+        document.body.classList.remove("invDragging");
+        if (sourceType === "inventory") {
+          showInventoryScrapConfirm(item, { kind: "inventory", invIndex: sourceIndex });
+        } else {
+          const sk = slotKeys[sourceIndex];
+          showInventoryScrapConfirm(item, { kind: "equipment", slotKey: sk });
+        }
+      };
+    }
   }
 
   // ========= Drops / XP =========
   // Blood drop rules (B2): use getBloodTypesForLevel(currentLevelConfig.id) / getRandomBloodTypeForLevel(currentLevelConfig.id).
+  function adjustLootRarityAfterBump(rarity, opts){
+    const biome = (currentLevelConfig && currentLevelConfig.biome) || 1;
+    const gt = gameTime || 0;
+    const elite = !!opts.elite, boss = !!opts.boss, miniboss = !!opts.miniboss;
+    if (rarity === "set") return rarity;
+    let r = rarity;
+    if (biome >= 4 && r !== "mythic") {
+      let pM = 0;
+      if (boss && !miniboss) pM = 0.12 + Math.min(0.22, (gt / 3600) * 0.04);
+      else if (miniboss) pM = 0.035 + Math.min(0.10, (gt / 4200) * 0.025);
+      else if (elite) pM = 0.0005 + Math.min(0.0022, (gt / 7200) * 0.00035);
+      else pM = 0.00005 + Math.min(0.00022, (gt / 10000) * 0.00003);
+      if (Math.random() < pM) return "mythic";
+    }
+    if (biome >= 3) {
+      if (r === "rare") {
+        const pL = 0.04 + Math.min(0.12, (gt / 6000) * 0.03) + (elite ? 0.015 : 0) + (miniboss ? 0.06 : 0) + (boss && !miniboss ? 0.14 : 0);
+        if (Math.random() < pL) r = "legendary";
+      } else if (r === "uncommon") {
+        const pL2 = 0.01 + Math.min(0.05, (gt / 9000) * 0.02) + (elite ? 0.006 : 0);
+        if (Math.random() < pL2) r = "legendary";
+      }
+    }
+    return r;
+  }
   function dropXP(x,y, elite=false, boss=false){
     const n = boss ? randi(6,10) : elite ? randi(3,5) : randi(1,2);
     for(let i=0;i<n;i++){
@@ -3319,9 +4627,11 @@
       if(rarity==="uncommon" && Math.random()<0.32*bump) rarity="rare";
       if(rarity==="rare" && Math.random()<0.14*bump) rarity="legendary";
     }
-    // 1-1: drops never higher than rare
     const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
+    rarity = adjustLootRarityAfterBump(rarity, { elite, boss, miniboss });
+    // 1-1: drops never higher than rare
     if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
+    if(levelId === "1-1" && rarity === "mythic") rarity = "rare";
     const item=makeItem(type,rarity);
     const dropX = x+rand(-14,14)*PX, dropY = y+rand(-14,14)*PX;
     lootDrops.push({ x:dropX, y:dropY, r:12*PX, item, t:0, bob:rand(0,Math.PI*2) });
@@ -3336,7 +4646,9 @@
   function dropGuaranteedWeaponLevel11(x,y){
     const levelId = currentLevelConfig ? currentLevelConfig.id : "1-1";
     let rarity = rollRarity();
+    rarity = adjustLootRarityAfterBump(rarity, { elite: false, boss: false, miniboss: false });
     if(levelId === "1-1" && rarity === "legendary") rarity = "rare";
+    if(levelId === "1-1" && rarity === "mythic") rarity = "rare";
     const item = makeItem("weapon", rarity);
     lootDrops.push({ x:x+rand(-14,14)*PX, y:y+rand(-14,14)*PX, r:12*PX, item, t:0, bob:rand(0,Math.PI*2) });
     while(lootDrops.length > MAX_LOOT_DROPS) lootDrops.shift();
@@ -3369,6 +4681,8 @@
     while(player.xp >= player.xpNeed){
       player.xp -= player.xpNeed;
       player.level++;
+      metaCharacterLevel = Math.max(metaCharacterLevel, player.level);
+      persistMetaCharacterLevel();
       const isLevel11 = currentLevelConfig && currentLevelConfig.id === "1-1";
       if(isLevel11){
         // Level 1-1: faster early level-ups (especially 2 and 3)
@@ -3410,14 +4724,36 @@
   /** Clamp spawn position to map bounds so enemies never spawn outside the board. */
   function clampSpawnToMap(x, y){
     if(typeof mapW !== "number" || typeof mapH !== "number") return { x, y };
+    const tb = getTunnelBounds();
+    if (tb) {
+      return {
+        x: Math.max(tb.left + SPAWN_MAP_MARGIN, Math.min(tb.right - SPAWN_MAP_MARGIN, x)),
+        y: Math.max(SPAWN_MAP_MARGIN, Math.min(mapH - SPAWN_MAP_MARGIN, y))
+      };
+    }
     return {
       x: Math.max(SPAWN_MAP_MARGIN, Math.min(mapW - SPAWN_MAP_MARGIN, x)),
       y: Math.max(SPAWN_MAP_MARGIN, Math.min(mapH - SPAWN_MAP_MARGIN, y))
     };
   }
+  /** Biome 3 (Tunnels): playable corridor is center 2/3 of width, full height. Returns null for other biomes. */
+  function getTunnelBounds(){
+    if (!currentLevelConfig || currentLevelConfig.biome !== 3 || typeof mapW !== "number") return null;
+    const tw = mapW * (2/3);
+    return { left: (mapW - tw) / 2, right: (mapW + tw) / 2 };
+  }
   function getRandomSpawnPoint(){
     const doorInset = 40 * PX;
     const jitter = 15 * PX;
+    const tb = getTunnelBounds();
+    if (tb) {
+      // Tunnels: spawn from north (top) so player pushes upward toward boss at top.
+      const tunnelW = tb.right - tb.left;
+      return {
+        x: tb.left + 20*PX + rand(0, Math.max(0, tunnelW - 40*PX)),
+        y: doorInset + 8*PX + rand(0, 30*PX)
+      };
+    }
     const total = 4 + (manholes.length || 0);
     const pick = (Math.random() * total) | 0;
     if (pick < 4) {
@@ -3518,8 +4854,9 @@
       let minibossSp = 92 * PX * Math.min(1, scaleSpeed);
       if(currentLevelConfig && currentLevelConfig.id === "1-1") minibossSp *= 0.8;  // 1-1: skittering mice 20% slower
       if(currentLevelConfig && currentLevelConfig.id === "1-1" && typeof player !== "undefined" && player.moveSpeed != null && minibossSp > player.moveSpeed * PX) minibossSp = player.moveSpeed * PX * 0.99;
+      const isLevel13Dog = currentLevelConfig && currentLevelConfig.id === "1-3";
       enemies.push({
-        kind: "skitteringMouse",
+        kind: isLevel13Dog ? "dog" : "skitteringMouse",
         x,y,
         r: r*PX,
         hp, maxHP: hp,
@@ -3528,7 +4865,7 @@
         boss: true,
         miniboss: true,
         contactDmg,
-        icon: "🐭",
+        icon: isLevel13Dog ? "🐕" : "🐭",
         hitFlash:0,
         animOffset: rand(0, 10)
       });
@@ -3601,20 +4938,79 @@
     shootInDirection(dx/d, dy/d);
   }
 
+  function meleeSwingSound(){
+    beep({ freq: 220 + rand(-35, 35), dur: 0.055, type: "triangle", gain: 0.045, slide: 0.88 });
+    beep({ freq: 95 + rand(-15, 15), dur: 0.04, type: "sawtooth", gain: 0.028, slide: 0.92 });
+  }
+
+  function enemyInBladeSector(e, px, py, ang, innerR, outerR, halfArc){
+    const dx = e.x - px, dy = e.y - py;
+    const d = Math.hypot(dx, dy);
+    if(d < 1e-4) return false;
+    if(d < innerR - e.r) return false;
+    if(d > outerR + e.r) return false;
+    const a = Math.atan2(dy, dx);
+    let da = a - ang;
+    while(da > Math.PI) da -= Math.PI * 2;
+    while(da < -Math.PI) da += Math.PI * 2;
+    const angAllow = halfArc + Math.asin(clamp(e.r / d, 0, 0.999));
+    return Math.abs(da) <= angAllow;
+  }
+
+  function updateBladeSwipes(dt){
+    if(!bladeSwipes.length) return;
+    const innerR = player.r + 2 * PX;
+    const halfArc = BASE.bladeHalfArc;
+    for(let i = bladeSwipes.length - 1; i >= 0; i--){
+      const sw = bladeSwipes[i];
+      const reach = (sw.meleeKind === "axe" ? BASE.axeReach : BASE.bladeReach) * PX;
+      const outerR = innerR + reach;
+      const ang = Math.atan2(sw.uy, sw.ux);
+      for(const e of enemies){
+        if(sw.hit.has(e)) continue;
+        if(!enemyInBladeSector(e, player.x, player.y, ang, innerR, outerR, halfArc)) continue;
+        sw.hit.add(e);
+        let dealt = player.dmg;
+        if(sw.crit) dealt = Math.round(dealt * player.critDmg);
+        hitEnemy(e, dealt);
+        healFromLifesteal(dealt);
+        if(player.splash > 0) splashDamage(e.x, e.y, Math.round(dealt * player.splash));
+      }
+      sw.t += dt;
+      if(sw.t >= sw.maxT) bladeSwipes.splice(i, 1);
+    }
+  }
+
   function shootInDirection(ux, uy){
+    if(player.weaponStyle === "blade" || player.weaponStyle === "axe"){
+      meleeSwingSound();
+      bladeSwipes.push({
+        ux, uy,
+        t: 0,
+        maxT: BASE.bladeSwipeDuration,
+        hit: new Set(),
+        crit: Math.random() < player.crit,
+        meleeKind: player.weaponStyle === "axe" ? "axe" : "blade",
+      });
+      return;
+    }
     const sp=BASE.bulletSpeed*PX;
     const pierceVal = player.pierce || 0;
     const pierceInt = Math.floor(pierceVal) + (Math.random() < (pierceVal % 1) ? 1 : 0);
+    const ws = player.weaponStyle;
+    const projKind = ws === "laser" ? "laser" : ws === "cannon" ? "cannon" : "gun";
+    const br = projKind === "cannon" ? 5.35 * PX : 4.2 * PX;
     bullets.push({
       x: player.x + ux*(player.r+6*PX),
       y: player.y + uy*(player.r+6*PX),
       vx: ux*sp, vy: uy*sp,
-      r: 4.2*PX,
+      r: br,
       life: BASE.bulletLife,
       pierce: pierceInt,
       hits: 0,
       dmg: player.dmg,
-      crit: Math.random() < player.crit
+      crit: Math.random() < player.crit,
+      projKind,
     });
     beep({freq: 500 + rand(-50,50), dur:0.036, type:"square", gain:0.028, slide:0.85});
   }
@@ -3794,7 +5190,9 @@
           scale,
           mainR,
           secondary,
-          splatter
+          splatter,
+          bloodTimeMult: getAnticoagulantBloodTimeMult(),
+          gatherMs: 0,
         });
         // Small blood-splat burst when pool appears.
         for(let n=0;n<9;n++){
@@ -4088,6 +5486,7 @@
       menuMusic.play().catch(()=>{});
     }
     attachVolumeListeners(ovBody);
+    scheduleTheoBaseTipIfNew("hub_welcome");
   }
 
   function showUpgradesMenu(){
@@ -4199,6 +5598,7 @@
     backBtn.onclick = () => showMainMenu();
     btnWrap.appendChild(backBtn);
     ovBody.appendChild(btnWrap);
+    scheduleTheoBaseTipIfNew("drop_zone");
   }
 
   const BLOOD_TRAITS = [
@@ -4333,6 +5733,7 @@
     wrap.appendChild(backBtn);
     ovBody.innerHTML = "";
     ovBody.appendChild(wrap);
+    scheduleTheoBaseTipIfNew("chem_lab");
   }
 
   function showContractsMenu(){
@@ -4481,6 +5882,7 @@
     wrap.appendChild(backBtn);
 
     ovBody.appendChild(wrap);
+    scheduleTheoBaseTipIfNew("contracts");
   }
 
   function showCoreSystemsMenu(){
@@ -4554,8 +5956,13 @@
       costCell.className = "coreTreeCostCell";
       costCell.style.cssText = "width:72px; text-align:right; font-size:9px; font-weight:800; color:rgba(200,220,255,.9); min-width:72px; white-space:nowrap;";
       const nextCost = getCoreNodeCost(node, level, maxLevel);
-      const canUpgrade = unlocked && level < maxLevel && tokens >= nextCost && nextCost > 0;
-      costCell.textContent = (level < maxLevel && nextCost > 0) ? ("COST: " + String(nextCost)) : "";
+      const redMlNeed = node.id === "sci_sanguine_mod_channels" ? SCI_SANGUINE_MOD_CHANNELS_RED_ML : 0;
+      const haveRedForSci = !redMlNeed || (baseBloodMl.red | 0) >= redMlNeed;
+      const canUpgrade = unlocked && level < maxLevel && tokens >= nextCost && nextCost > 0 && haveRedForSci;
+      costCell.textContent =
+        level < maxLevel && nextCost > 0
+          ? "COST: " + String(nextCost) + (redMlNeed ? " + " + String(redMlNeed) + " Red" : "")
+          : "";
       row.appendChild(costCell);
       const balloonWrap = document.createElement("div");
       balloonWrap.style.cssText = "display:flex; flex-direction:column; align-items:center; gap:4px;";
@@ -4596,8 +6003,14 @@
         confirmBtn.onclick = () => {
           const costNow = getCoreNodeCost(node, level, maxLevel);
           if(costNow <= 0 || tokens < costNow) return;
+          const redNeed = node.id === "sci_sanguine_mod_channels" ? SCI_SANGUINE_MOD_CHANNELS_RED_ML : 0;
+          if (redNeed && (baseBloodMl.red | 0) < redNeed) return;
           tokens -= costNow;
           skillLevels[node.id] = (skillLevels[node.id]||0) + 1;
+          if (redNeed) {
+            baseBloodMl.red = (baseBloodMl.red | 0) - redNeed;
+            try { localStorage.setItem("affixloot_base_blood_ml", JSON.stringify(baseBloodMl)); } catch (e) {}
+          }
           localStorage.setItem("affixloot_tokens", String(tokens));
           localStorage.setItem("affixloot_skill_levels", JSON.stringify(skillLevels));
           beep({freq:640,dur:0.06,type:"triangle",gain:0.05});
@@ -4775,6 +6188,48 @@
           info.next = level >= maxLevel ? "Max level reached." : "Inventory slots at next level: " + nxt;
           break;
         }
+        case "loot_left_2":
+        case "loot_right_2": {
+          info.desc =
+            "Passive: ground loot that is strictly worse than your best item of the same type (equipped + backpack) is instantly converted to base scrap and never uses a backpack slot. Uses the same scrap value as manual dismantle.";
+          info.current =
+            level > 0
+              ? "Salvage Filter: ON — inferior pickups become scrap automatically."
+              : "Salvage Filter: OFF.";
+          info.next =
+            level >= maxLevel ? "Max level reached." : "Purchase to enable automatic salvaging of worse gear on pickup.";
+          break;
+        }
+        case "sci_anticoagulant_bullets": {
+          const mult = (lv) => 1 + 0.05 * lv;
+          info.desc = "Compounds in your ammunition slow coagulation. Blood pools stay sampleable longer before drying out.";
+          info.current = level === 0 ? "Pool usable duration: ×1.00 (baseline)" : "Usable + fade timeline: ×" + mult(level).toFixed(2) + " (" + (5 * level) + "% longer)";
+          info.next = level >= maxLevel ? "Max level reached." : "Next level: ×" + mult(nextLevel).toFixed(2) + " (" + (5 * nextLevel) + "% longer)";
+          break;
+        }
+        case "sci_sanguine_mod_channels": {
+          info.desc =
+            "Raises how many mod slots you may carve per item (Armory). You still pay scrap per slot on each item (O); blood (ml) etches properties into open slots ([). Each level adds one to your global channel budget; rarity caps per item (uncommon 1 … mythic/set 4).";
+          info.current =
+            level === 0
+              ? "0 channels — cannot open mod slots on gear."
+              : "Channel budget: " + level + "/4 — min(budget, rarity) slots openable per item.";
+          info.next =
+            level >= maxLevel
+              ? "All 4 channels in budget. Rarity still caps per item."
+              : "Next: budget " + nextLevel + "/4 — also spend " + SCI_SANGUINE_MOD_CHANNELS_RED_ML + " ml Red blood (stored) + tokens.";
+          break;
+        }
+        case "loot_top":
+        case "sci_top": {
+          info.desc = "Part of Blood Echo Forge: with BOTH Looter and Scientist top nodes, use Armory key G on a selected item to spend Obsidian or Crimson lab blood and raise grade by +10 (up to that item's rarity cap).";
+          info.current =
+            level > 0
+              ? (hasBloodGradeForgeUnlocked() ? "Forge active — Armory (G) on item." : "Purchase the other tree's top node to activate forging.")
+              : "Not purchased.";
+          info.next = level >= maxLevel ? "Max level reached." : "Purchase to unlock this half of the forge.";
+          break;
+        }
         default: {
           info.desc = "No detailed description yet.";
           info.current = level <= 0 ? "No effect yet." : "Effect is active.";
@@ -4859,7 +6314,7 @@
       label.style.cssText = "font-size:28px; font-weight:900; letter-spacing:.18em; color:rgba(220,235,255,.96); margin-bottom:14px; flex-shrink:0; text-shadow:0 0 16px rgba(120,180,255,.6); text-align:center;";
       col.appendChild(label);
       col.appendChild(branchWrap);
-      if(tree.id !== "warrior"){
+      if(tree.id !== "warrior" && tree.id !== "scientist" && tree.id !== "looter"){
         col.style.position = "relative";
         const comingSoon = document.createElement("div");
         comingSoon.className = "coreTreeComingSoon";
@@ -4948,6 +6403,7 @@
     });
     ovBody.innerHTML = "";
     ovBody.appendChild(panel);
+    scheduleTheoBaseTipIfNew("core_systems");
   }
 
   function showHighScore(){
@@ -5096,10 +6552,12 @@
 
   // ========= Reset / Start =========
   function resetState(keepEquipped){
-    enemies=[]; bullets=[]; enemyProjectiles=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[];
+    enemies=[]; bullets=[]; enemyProjectiles=[]; orbs=[]; lootDrops=[]; particles=[]; levelUpRings=[]; bladeSwipes=[];
     kills=0; lootCount=0; streak=0; streakT=0;
     threat=1.0; spawnAcc=0; atkCD=0;
     lootPickupCooldown=0;
+    lootFullApproachLatch=false;
+    weaponBlinkSuppressed = {};
     minibossWarned=false; minibossSpawned=false; bossWarned=false; bossSpawned=false; bossKilled=false;
     lastSpawnedBossMinute = -1;
     lastSpawnedMinibossMinute = -1;
@@ -5120,13 +6578,11 @@
     tutorialBubbleEl=null;
     if(level11ControlsWrap && level11ControlsWrap.parentNode) level11ControlsWrap.remove();
     level11ControlsWrap=null;
-    runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0 };
+    runLootByRarity={ common:0, uncommon:0, rare:0, legendary:0, mythic:0 };
     runBloodMlByType={ common:0, uncommon:0, rare:0, legendary:0 };
     bloodPools = [];
     runBloodMl = {};
-    runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, set: 0 };
-    gatheringPool = null;
-    gatheringAccumulatedMs = 0;
+    runScrap = { common: 0, uncommon: 0, rare: 0, legendary: 0, mythic: 0, set: 0 };
 
     // Level 1-1 manhole-zone scenario state
     level11Active = !!(currentLevelConfig && currentLevelConfig.id === "1-1");
@@ -5148,6 +6604,11 @@
     level11CamTargetX = null;
     level11CamTargetY = null;
 
+    biome1GnawClusters = [];
+    biome1AggroMovePx = 0;
+    biome1ClusterIdCounter = 1;
+    mallGnawMasterAcc = 0;
+
     runTotalXp = 0;
     tokenBarProgress = 0;
     tokenPops = [];
@@ -5163,47 +6624,52 @@
     // No buildings/props inside fountain: keep center at least poolR + half largest building (6*48*PX/2)
     const avoidR = Math.max(FOUNTAIN_MIN_SPAWN_DIST, fountainPoolR + 0.5 * 6 * 48 * PX);
     const MIN_MANHOLE_SEP = 70 * PX;
+    const isTunnelBiome = currentLevelConfig && currentLevelConfig.biome === 3;
     manholes = [];
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 2; col++) {
-        const zoneW = mapW / 2, zoneH = mapH / 3;
-        let placed = false;
-        for (let attempt = 0; attempt < 50 && !placed; attempt++) {
-          let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
-          let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
-          const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
-          if (toFountain < avoidR) {
-            const angle = Math.atan2(y - fountainCy, x - fountainCx);
-            x = fountainCx + Math.cos(angle) * avoidR;
-            y = fountainCy + Math.sin(angle) * avoidR;
-          }
-          let tooClose = false;
-          for (const m of manholes) {
-            if (Math.hypot(x - m.x, y - m.y) < m.r + MIN_MANHOLE_SEP) {
-              tooClose = true;
-              break;
+    if (!isTunnelBiome) {
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 2; col++) {
+          const zoneW = mapW / 2, zoneH = mapH / 3;
+          let placed = false;
+          for (let attempt = 0; attempt < 50 && !placed; attempt++) {
+            let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
+            let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
+            const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
+            if (toFountain < avoidR) {
+              const angle = Math.atan2(y - fountainCy, x - fountainCx);
+              x = fountainCx + Math.cos(angle) * avoidR;
+              y = fountainCy + Math.sin(angle) * avoidR;
+            }
+            let tooClose = false;
+            for (const m of manholes) {
+              if (Math.hypot(x - m.x, y - m.y) < m.r + MIN_MANHOLE_SEP) {
+                tooClose = true;
+                break;
+              }
+            }
+            if (!tooClose) {
+              manholes.push({ x, y, r: manholeR });
+              placed = true;
             }
           }
-          if (!tooClose) {
+          if (!placed) {
+            let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
+            let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
+            const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
+            if (toFountain < avoidR) {
+              const angle = Math.atan2(y - fountainCy, x - fountainCx);
+              x = fountainCx + Math.cos(angle) * avoidR;
+              y = fountainCy + Math.sin(angle) * avoidR;
+            }
             manholes.push({ x, y, r: manholeR });
-            placed = true;
           }
-        }
-        if (!placed) {
-          let x = margin + rand(0, zoneW - 2 * margin) + col * zoneW;
-          let y = margin + rand(0, zoneH - 2 * margin) + row * zoneH;
-          const toFountain = Math.hypot(x - fountainCx, y - fountainCy);
-          if (toFountain < avoidR) {
-            const angle = Math.atan2(y - fountainCy, x - fountainCx);
-            x = fountainCx + Math.cos(angle) * avoidR;
-            y = fountainCy + Math.sin(angle) * avoidR;
-          }
-          manholes.push({ x, y, r: manholeR });
         }
       }
     }
     const doorInset = 40 * PX * mapScale;
-    // Mall buildings: size scaled with map (was 8×5 tiles on 4× viewport; now 6×4 on 2× viewport for same relative spread).
+    // Mall buildings and scenery only for non-tunnel biomes (tunnel has no fountain/manholes/props).
+    mallProps = [];
+    if (!isTunnelBiome) {
     const TILE = 48 * PX;
     const SHOP_W = 6 * TILE;
     const SHOP_H = 4 * TILE;
@@ -5348,16 +6814,23 @@
     placeScenery("bench", 3);
     placeScenery("flowerPotSmall", 5);
     placeScenery("plantLarge", 3);
+    }
 
     // Level 1-1: pre-place clustered mice and corpses around each manhole
     if(level11Active){
       setupLevel11Zones();
     }
-    const poolR = 80 * 1.4 * PX * mapScale;
-    const spawnDist = poolR + player.r + 28 * PX * mapScale;
-    const spawnAngle = Math.random() * Math.PI * 2;
-    player.x = fountainCx + Math.cos(spawnAngle) * spawnDist;
-    player.y = fountainCy + Math.sin(spawnAngle) * spawnDist;
+    const tb = getTunnelBounds();
+    if (tb) {
+      player.x = (tb.left + tb.right) / 2;
+      player.y = mapH - margin - 60 * PX;
+    } else {
+      const poolR = 80 * 1.4 * PX * mapScale;
+      const spawnDist = poolR + player.r + 28 * PX * mapScale;
+      const spawnAngle = Math.random() * Math.PI * 2;
+      player.x = fountainCx + Math.cos(spawnAngle) * spawnDist;
+      player.y = fountainCy + Math.sin(spawnAngle) * spawnDist;
+    }
     player.vx=0; player.vy=0;
     player.level=1; player.xp=0; player.xpNeed=BASE.xpNeed;
 
@@ -5414,6 +6887,11 @@
     }
     if(DEV_GIVE_LEGENDARY_WEAPON){
       equipped.weapon = makeItem("weapon", "legendary");
+      equipped.weapon.gradeRevealed = true;
+      equipped.weapon.grade = 200;
+      equipped.weapon.bloodRedSteps = 0;
+      metaCharacterLevel = Math.max(metaCharacterLevel, Math.ceil(equipped.weapon.grade / 10));
+      persistMetaCharacterLevel();
     }
     if(currentLevelConfig && currentLevelConfig.id === "1-1" && !DEV_GIVE_LEGENDARY_WEAPON){
       const devGiftItem = makeItem("weapon", "rare");
@@ -5447,8 +6925,11 @@
     fountainDecorAngle = rand(Math.PI, Math.PI * 2);  // upper half (y above center)
     fountainDecorRadiusFrac = 0.32 + rand(0, 0.16);
 
-    // Level 1-1 uses custom manhole-cluster scenario; other levels use standard initial spawns
-    if(!level11Active){
+    // Level 1-1 uses custom manhole-cluster scenario; other biome 1 mall levels: clustered mice on skeletons
+    if(!level11Active && currentLevelConfig && currentLevelConfig.biome === 1){
+      const n = ENDLESS_RUN ? 28 : TEST_SINGLE_MOB_MODE ? 14 : 4;
+      spawnBiome1InitialClusters(n);
+    } else if(!level11Active){
       if(ENDLESS_RUN){
         for(let i=0;i<28;i++) spawnEnemy(false);
       } else if(TEST_SINGLE_MOB_MODE){
@@ -5549,7 +7030,10 @@
         spawnsStopped: false,
         spawnAcc: 0,
         closed: false,
-        weldMs: 0
+        weldMs: 0,
+        skeletonIdx: Math.floor(Math.random() * 4),
+        skeletonRot: Math.random() * Math.PI * 2,
+        gnawPAcc: 0,
       };
       level11Zones.push(zone);
       spawnLevel11ClusterForZone(zone);
@@ -5584,6 +7068,199 @@
       e.clusterIdle = true;
       e.clusterInner = !!isInner;
       e.clusterAggro = false;
+    }
+  }
+
+  function spawnBiome1InitialClusters(totalMice){
+    biome1GnawClusters = [];
+    const doorInset = 40 * PX;
+    const jitter = 15 * PX;
+    const anchors = [
+      { x: mapW / 2 + rand(-jitter, jitter), y: doorInset + 8 * PX },
+      { x: mapW / 2 + rand(-jitter, jitter), y: mapH - doorInset - 8 * PX },
+      { x: doorInset + 8 * PX, y: mapH / 2 + rand(-jitter, jitter) },
+      { x: mapW - doorInset - 8 * PX, y: mapH / 2 + rand(-jitter, jitter) },
+    ];
+    const nC = 4;
+    let rem = Math.max(0, totalMice | 0);
+    const counts = [];
+    for (let i = 0; i < nC && rem > 0; i++) {
+      const take = Math.ceil(rem / (nC - i));
+      counts.push(take);
+      rem -= take;
+    }
+    while (counts.length < nC) counts.push(0);
+    const pr = player && player.r != null ? player.r : BASE.playerR;
+    for (let c = 0; c < nC; c++) {
+      const cnt = counts[c] || 0;
+      if (cnt <= 0) continue;
+      const id = biome1ClusterIdCounter++;
+      const cx = anchors[c].x;
+      const cy = anchors[c].y;
+      biome1GnawClusters.push({
+        id,
+        cx,
+        cy,
+        skeletonIdx: Math.floor(Math.random() * 4),
+        skeletonRot: Math.random() * Math.PI * 2,
+        aggro: false,
+        gnawPAcc: 0,
+      });
+      const inner = Math.min(6, cnt);
+      const outer = cnt - inner;
+      for (let i = 0; i < cnt; i++) {
+        const isInner = i < inner;
+        const ringIndex = isInner ? i : i - inner;
+        const ringCount = isInner ? inner : Math.max(1, outer);
+        const baseAngle = (ringIndex / ringCount) * Math.PI * 2;
+        const ang = baseAngle + rand(-Math.PI * 0.12, Math.PI * 0.12);
+        const baseR = pr * (isInner ? 1.35 : 2.45);
+        const rr = baseR * rand(0.72, 1.12);
+        spawnEnemy(false);
+        const e = enemies[enemies.length - 1];
+        if (!e || e.kind !== "skitteringMouse") continue;
+        e.x = cx + Math.cos(ang) * rr;
+        e.y = cy + Math.sin(ang) * rr;
+        const cl = clampSpawnToMap(e.x, e.y);
+        e.x = cl.x;
+        e.y = cl.y;
+        e.biome1ClusterId = id;
+        e.clusterAggro = false;
+      }
+    }
+  }
+
+  function updateBiome1ClusterAggro(){
+    if (level11Active || !currentLevelConfig || currentLevelConfig.biome !== 1 || !biome1GnawClusters.length) return;
+    const bulletRange = (BASE.bulletSpeed * BASE.bulletLife) * PX;
+    const aggroR = Math.max(260 * PX, bulletRange * 1.12);
+    for (const cl of biome1GnawClusters) {
+      if (cl.aggro) continue;
+      if (biome1AggroMovePx < LEVEL11_AGGRO_MOVE_BUFFER_PX) continue;
+      const dx = player.x - cl.cx;
+      const dy = player.y - cl.cy;
+      if (dx * dx + dy * dy > aggroR * aggroR) continue;
+      cl.aggro = true;
+      for (const e of enemies) {
+        if (e && e.biome1ClusterId === cl.id) e.clusterAggro = true;
+      }
+    }
+  }
+
+  /** Gnaw SFX only when this close: aggro radius + margin (design px). */
+  const GNAW_SFX_EXTRA_RANGE_PX = 200;
+
+  function playerWithinClusterGnawSfxRange(wx, wy, aggroR){
+    const hearR = aggroR + GNAW_SFX_EXTRA_RANGE_PX * PX;
+    const dx = player.x - wx;
+    const dy = player.y - wy;
+    return dx * dx + dy * dy <= hearR * hearR;
+  }
+
+  function updateBiome1SkeletonGnawFx(dt){
+    if (!currentLevelConfig || currentLevelConfig.biome !== 1) return;
+    const bloodCols = ["#7a0a0a", "#9a1010", "#b01030", "#4a0000", "#c42828"];
+    function splatAt(wx, wy, accKey, host) {
+      host[accKey] = (host[accKey] || 0) + dt;
+      while (host[accKey] > 0.09) {
+        host[accKey] -= 0.09;
+        const a = Math.random() * Math.PI * 2;
+        const sp = rand(35, 120) * PX;
+        particles.push({
+          x: wx + rand(-10, 10) * PX,
+          y: wy + rand(-8, 8) * PX,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp - rand(20, 90) * PX,
+          r: rand(1.2, 3.2) * PX,
+          life: rand(0.22, 0.48),
+          t: 0,
+          col: pick(bloodCols),
+        });
+      }
+    }
+    if (level11Active && level11Zones.length) {
+      for (const zone of level11Zones) {
+        if (zone.activated) continue;
+        splatAt(zone.corpseX, zone.corpseY, "gnawPAcc", zone);
+      }
+    }
+    for (const cl of biome1GnawClusters) {
+      if (cl.aggro) continue;
+      splatAt(cl.cx, cl.cy, "gnawPAcc", cl);
+    }
+    const bulletRangeGnaw = (BASE.bulletSpeed * BASE.bulletLife) * PX;
+    const aggroRGnawDefault = Math.max(260 * PX, bulletRangeGnaw * 1.12);
+    let gnawSitesForSfx = 0;
+    if (level11Active && level11Zones.length) {
+      for (const zone of level11Zones) {
+        if (zone.activated) continue;
+        const ar = zone.aggroR != null ? zone.aggroR : aggroRGnawDefault;
+        if (playerWithinClusterGnawSfxRange(zone.corpseX, zone.corpseY, ar)) gnawSitesForSfx++;
+      }
+    }
+    for (const cl of biome1GnawClusters) {
+      if (cl.aggro) continue;
+      if (playerWithinClusterGnawSfxRange(cl.cx, cl.cy, aggroRGnawDefault)) gnawSitesForSfx++;
+    }
+    if (gnawSitesForSfx === 0 || sfxVol <= 0) return;
+    mallGnawMasterAcc += dt;
+    if (mallGnawMasterAcc < 0.2) return;
+    mallGnawMasterAcc = 0;
+    ensureAudio();
+    const phase = Math.floor(gameTime * 4.2 + gnawSitesForSfx * 0.15) % 4;
+    if (phase === 0) {
+      beep({ freq: rand(200, 280), dur: 0.038, type: "square", gain: 0.034, slide: 0.68 });
+      beep({ noise: true, dur: 0.028, gain: 0.016 });
+    } else if (phase === 1) {
+      beep({ freq: rand(320, 480), dur: 0.032, type: "sawtooth", gain: 0.03, slide: 0.52 });
+    } else if (phase === 2) {
+      beep({ freq: rand(140, 200), dur: 0.045, type: "triangle", gain: 0.036, slide: 0.62 });
+      beep({ noise: true, dur: 0.035, gain: 0.02 });
+    } else {
+      beep({ freq: 95, dur: 0.055, type: "sawtooth", gain: 0.038, slide: 0.42 });
+      beep({ freq: rand(400, 520), dur: 0.02, type: "square", gain: 0.022, slide: 0.55 });
+    }
+  }
+
+  /** Lying skeleton PNGs are wide; scale by longest side vs player (~body) so they stay under mouse rings. */
+  const BIOME1_SKELETON_LONG_AXIS_MULT = 11.35;
+
+  function drawBiome1Skeletons(){
+    if (!currentLevelConfig || currentLevelConfig.biome !== 1) return;
+    const spriteReady = (img) => img && img.complete && img.naturalWidth > 0;
+    const pr = player && player.r != null ? player.r : BASE.playerR;
+    const longLen = pr * BIOME1_SKELETON_LONG_AXIS_MULT;
+    function drawSkeletonImg(img, wx, wy, rot){
+      const nw = img.naturalWidth;
+      const nh = img.naturalHeight;
+      let dw, dh;
+      if (nw >= nh) {
+        dw = longLen;
+        dh = longLen * (nh / nw);
+      } else {
+        dh = longLen;
+        dw = longLen * (nw / nh);
+      }
+      ctx.save();
+      ctx.translate(wx, wy);
+      ctx.rotate(rot || 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+      ctx.restore();
+    }
+    if (level11Active && level11Zones.length) {
+      for (const zone of level11Zones) {
+        const idx = zone.skeletonIdx != null ? zone.skeletonIdx : 0;
+        const img = biome1SkeletonImgs[idx];
+        if (!spriteReady(img)) continue;
+        drawSkeletonImg(img, zone.corpseX, zone.corpseY, zone.skeletonRot || 0);
+      }
+    }
+    for (const cl of biome1GnawClusters) {
+      const idx = cl.skeletonIdx != null ? cl.skeletonIdx : 0;
+      const img = biome1SkeletonImgs[idx];
+      if (!spriteReady(img)) continue;
+      drawSkeletonImg(img, cl.cx, cl.cy, cl.skeletonRot || 0);
     }
   }
 
@@ -6068,6 +7745,10 @@
       updateLevel11Zones(dt, elapsed);
       updateLevel11Story(dt, elapsed);
     }
+    if(currentLevelConfig && currentLevelConfig.biome === 1){
+      updateBiome1ClusterAggro();
+      updateBiome1SkeletonGnawFx(dt);
+    }
     if(currentLevelConfig && currentLevelConfig.id === "1-1" && level11Dialogue && !level11Dialogue.done){
       level11UpdateDialogue(dt);
     }
@@ -6438,17 +8119,24 @@
     }
     const margin = 24 * PX;
     const prevX = player.x, prevY = player.y;
-    player.x=clamp(player.x+player.vx*dt, margin, mapW-margin);
-    player.y=clamp(player.y+player.vy*dt, margin, mapH-margin);
-    let out = pushOutOfFountain(player.x, player.y, player.r);
-    player.x = out.x; player.y = out.y;
-    out = pushOutOfManholes(player.x, player.y, player.r);
-    player.x = out.x; player.y = out.y;
-    out = pushOutOfMallProps(player.x, player.y, player.r);
-    player.x = out.x; player.y = out.y;
+    const tb = getTunnelBounds();
+    if (tb) {
+      player.x = clamp(player.x + player.vx * dt, tb.left + margin, tb.right - margin);
+      player.y = clamp(player.y + player.vy * dt, margin, mapH - margin);
+    } else {
+      player.x = clamp(player.x + player.vx * dt, margin, mapW - margin);
+      player.y = clamp(player.y + player.vy * dt, margin, mapH - margin);
+      let out = pushOutOfFountain(player.x, player.y, player.r);
+      player.x = out.x; player.y = out.y;
+      out = pushOutOfMallProps(player.x, player.y, player.r);
+      player.x = out.x; player.y = out.y;
+    }
     // Level 1-1: track distance moved so aggro only triggers after 60px
     if(level11Active && typeof level11DistanceMoved === "number"){
       level11DistanceMoved += Math.hypot(player.x - prevX, player.y - prevY);
+    }
+    if(currentLevelConfig && currentLevelConfig.biome === 1 && !level11Active){
+      biome1AggroMovePx += Math.hypot(player.x - prevX, player.y - prevY);
     }
     const plSpeed = Math.sqrt(player.vx*player.vx + player.vy*player.vy);
     if (plSpeed > 0.5*PX) {
@@ -6469,7 +8157,10 @@
     for(const e of enemies){
       if(!e || typeof e.x !== "number" || typeof e.y !== "number") continue;
 
-      const isClusterIdle = level11Active && e.clusterZone != null && !e.clusterAggro;
+      const isClusterIdle = !e.clusterAggro && (
+        (level11Active && e.clusterZone != null) ||
+        (typeof e.biome1ClusterId === "number")
+      );
       if(isClusterIdle){
         // Cluster mice for level 1-1 stay on their corpse until their zone is triggered
         if(e.hitFlash>0) e.hitFlash-=dt;
@@ -6487,13 +8178,17 @@
       e.x += (dx0/d0)*sp*dt;
       e.y += (dy0/d0)*sp*dt;
 
-      // Push enemies out of static obstacles
-      let eOut = pushOutOfFountain(e.x, e.y, e.r);
-      e.x = eOut.x; e.y = eOut.y;
-      eOut = pushOutOfManholes(e.x, e.y, e.r);
-      e.x = eOut.x; e.y = eOut.y;
-      eOut = pushOutOfMallProps(e.x, e.y, e.r);
-      e.x = eOut.x; e.y = eOut.y;
+      // Push enemies out of static obstacles (tunnel has none; just clamp to corridor)
+      const eTb = getTunnelBounds();
+      if (eTb) {
+        e.x = clamp(e.x, eTb.left + margin, eTb.right - margin);
+        e.y = clamp(e.y, margin, mapH - margin);
+      } else {
+        let eOut = pushOutOfFountain(e.x, e.y, e.r);
+        e.x = eOut.x; e.y = eOut.y;
+        eOut = pushOutOfMallProps(e.x, e.y, e.r);
+        e.x = eOut.x; e.y = eOut.y;
+      }
       if(e.hitFlash>0) e.hitFlash-=dt;
 
       // Ranged enemies (biome 2+): shoot at player when in range
@@ -6544,6 +8239,9 @@
       if(p.life <= 0 || p.x < -50 || p.x > mapW + 50 || p.y < -50 || p.y > mapH + 50){
         enemyProjectiles.splice(i, 1); continue;
       }
+      if(circleHitsMallShopWall(p.x, p.y, p.r)){
+        enemyProjectiles.splice(i, 1); continue;
+      }
       const pd2 = (player.x - p.x)**2 + (player.y - p.y)**2;
       if(pd2 < (player.r + p.r)**2){
         takeDamage(p.dmg);
@@ -6573,6 +8271,9 @@
       if(b.life<=0 || b.x<-100 || b.x>mapW+100 || b.y<-100 || b.y>mapH+100){
         bullets.splice(i,1); continue;
       }
+      if(circleHitsMallShopWall(b.x, b.y, b.r)){
+        bullets.splice(i,1); continue;
+      }
       for(let j=enemies.length-1;j>=0;j--){
         const e=enemies[j];
         const rr=b.r+e.r;
@@ -6592,6 +8293,8 @@
         }
       }
     }
+
+    updateBladeSwipes(dt);
 
     // orbs
     for(let i=orbs.length-1;i>=0;i--){
@@ -6626,97 +8329,114 @@
       }
     }
 
-    // Blood pools: age in seconds; 0–10s = sampleable (red → dark); 10s = coagulated; remove after 20s
-    // Only one pool is "active" at a time (first one we're in range of, by array order); when it's done or we leave, next gets the bar
+    // Blood pools: age; per-pool gatherMs; overlapping stacks — lower index is under, blocked by non-expired above until gathered/expired.
     const R = BLOOD_GATHER_RADIUS * PX;
     const R2 = R * R;
     for (let i = bloodPools.length - 1; i >= 0; i--) {
       const pool = bloodPools[i];
       if (pool.gathered) {
-        if (gatheringPool === pool) gatheringPool = null;
         bloodPools.splice(i, 1);
         continue;
       }
       const ageMs = now() - pool.spawnT;
       const ageSec = ageMs / 1000;
-      if (ageSec >= BLOOD_POOL_REMOVE_AFTER_SEC) {
-        if (gatheringPool === pool) gatheringPool = null;
+      const tm = pool.bloodTimeMult > 0 ? pool.bloodTimeMult : 1;
+      const removeAfter = BLOOD_POOL_REMOVE_AFTER_SEC * tm;
+      const maxAge = BLOOD_POOL_MAX_AGE_SEC * tm;
+      if (ageSec >= removeAfter) {
         bloodPools.splice(i, 1);
         continue;
       }
-      if (ageSec >= BLOOD_POOL_MAX_AGE_SEC) pool.expired = true;
-      if (!pool.coagulated && ageSec >= BLOOD_COAGULATE_SEC) pool.coagulated = true;
-      if (gatheringPool === pool && (pool.expired || !pool.coagulated)) gatheringPool = null;
-    }
-    // Validate current gathering pool (still in list, still sampleable). Do NOT clear when out of range – timer resumes when we step back in.
-    if (gatheringPool) {
-      const inList = bloodPools.indexOf(gatheringPool) >= 0;
-      const sampleable = gatheringPool.coagulated && !gatheringPool.expired && !gatheringPool.gathered;
-      if (!inList || !sampleable) gatheringPool = null;
-    }
-    // If no active pool, pick the first (by array order) pool we're in range of that is sampleable
-    if (!gatheringPool) {
-      for (const pool of bloodPools) {
-        if (pool.gathered || pool.expired || !pool.coagulated) continue;
-        if (dist2(pool.x, pool.y, player.x, player.y) < R2) {
-          gatheringPool = pool;
-          gatheringAccumulatedMs = 0;
-          break;
-        }
+      if (ageSec >= maxAge) pool.expired = true;
+      if (!pool.coagulated && ageSec >= BLOOD_COAGULATE_SEC) {
+        pool.coagulated = true;
+        pool.coagulatedAtMs = now();
+      }
+      if (
+        pool.coagulated &&
+        !pool.gathered &&
+        pool.coagulatedAtMs != null &&
+        now() - pool.coagulatedAtMs >= BLOOD_POOL_COAGULATED_LINGER_SEC * 1000
+      ) {
+        bloodPools.splice(i, 1);
+        continue;
       }
     }
-    // Advance timer only while standing in the pool; when we leave, timer pauses and resumes when we re-enter (before coagulate)
-    const inRangeOfGathering = gatheringPool && dist2(gatheringPool.x, gatheringPool.y, player.x, player.y) < R2;
-    if (inRangeOfGathering && !inCompare && !paused) {
-      gatheringAccumulatedMs += dt * 1000;
-      if (gatheringAccumulatedMs >= BLOOD_GATHER_SEC * 1000) {
-        const pool = gatheringPool;
-        runBloodMl[pool.bloodTypeId] = (runBloodMl[pool.bloodTypeId] || 0) + pool.ml;
-        pool.gathered = true;
-        gatheringPool = null;
-        gatheringAccumulatedMs = 0;
-        showSimpleToast("Blood sample secured +" + pool.ml + " ml");
-        beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
-        setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
-        
-        // Unlock intel based on blood type discovery
-        const btId = pool.bloodTypeId;
-        if(btId === "red") unlockIntel("orders", "blood_red_analysis");
-        else if(btId === "green") unlockIntel("orders", "blood_green_discovery");
-        else if(btId === "blue") unlockIntel("orders", "blood_blue_discovery");
-        else if(btId === "purple") unlockIntel("orders", "blood_purple_discovery");
+    if (!inCompare && !paused) {
+      for (let idx = 0; idx < bloodPools.length; idx++) {
+        const pool = bloodPools[idx];
+        if (pool.gathered || pool.expired || !pool.coagulated) continue;
+        if (dist2(pool.x, pool.y, player.x, player.y) >= R2) continue;
+        if (bloodPoolBlockedByOverlappingAbove(idx)) continue;
+        pool.gatherMs = (pool.gatherMs || 0) + dt * 1000;
+        if (pool.gatherMs >= BLOOD_GATHER_SEC * 1000) {
+          runBloodMl[pool.bloodTypeId] = (runBloodMl[pool.bloodTypeId] || 0) + pool.ml;
+          pool.gathered = true;
+          pool.gatherMs = 0;
+          showSimpleToast("Blood sample secured +" + pool.ml + " ml");
+          beep({ freq: 523, dur: 0.09, type: "sine", gain: 0.14 });
+          setTimeout(() => { beep({ freq: 659, dur: 0.10, type: "sine", gain: 0.12 }); }, 70);
+          const btId = pool.bloodTypeId;
+          if (btId === "red") unlockIntel("orders", "blood_red_analysis");
+          else if (btId === "green") unlockIntel("orders", "blood_green_discovery");
+          else if (btId === "blue") unlockIntel("orders", "blood_blue_discovery");
+          else if (btId === "purple") unlockIntel("orders", "blood_purple_discovery");
+        }
       }
     }
 
     if(lootPickupCooldown>0) lootPickupCooldown -= dt;
 
-    // loot drops -> compare (no magnet; pickup only by walking over)
+    // loot drops: pickup to inventory only (no automatic compare — use inventory + click)
+    for (const L of lootDrops) L.t += dt;
+
+    const maxInvLoot = getInventoryMaxSlots();
+    const invFullLoot = inventory.length >= maxInvLoot;
+    let touchingAnyLoot = false;
+    let salvageableWhileFull = false;
+    for (const L of lootDrops) {
+      const d2pT = dist2(L.x, L.y, player.x, player.y);
+      const rrT = player.r + L.r;
+      if (d2pT < rrT * rrT) {
+        touchingAnyLoot = true;
+        if (invFullLoot && !L.devGift && shouldAutoScrapInferiorPickup(L.item)) salvageableWhileFull = true;
+      }
+    }
+    if (invFullLoot && touchingAnyLoot && !salvageableWhileFull) {
+      if (!lootFullApproachLatch) {
+        lootFullApproachLatch = true;
+        showSimpleToast("Inventory full — make room to pick up loot");
+      }
+    } else {
+      lootFullApproachLatch = false;
+    }
+
     for(let i=lootDrops.length-1;i>=0;i--){
       const L=lootDrops[i];
-      L.t += dt;
       const d2p=dist2(L.x,L.y,player.x,player.y);
       const rr=player.r+L.r;
       if(d2p < rr*rr && lootPickupCooldown<=0){
-        const slotKey = slotForType(L.item.type);
-        const currentItem = equipped[slotKey] || null;
-        let skipCompare = false;
-        if (currentItem) {
-          const sA = computeStats(equipped);
-          const sB = computeStats({ ...equipped, [slotKey]: L.item });
-          const diffs = getStatDiffs(sA, sB);
-          if (diffs.length > 0 && diffs.every(d => !d.goodB)) {
-            skipCompare = true;
-            lootDrops.splice(i, 1);
-            addToInventory(L.item);
-            lootCount++;
-            runLootByRarity[L.item.rarity] = (runLootByRarity[L.item.rarity] || 0) + 1;
-            const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
-            player.invuln = Math.max(player.invuln, invulnDur);
-            lootPickupCooldown = 0;
-            showSimpleToast("Added to inventory (weaker)");
-          }
+        const item = L.item;
+        if (!L.devGift && applyInferiorLootAutoScrap(item)) {
+          lootDrops.splice(i, 1);
+          lootCount++;
+          runLootByRarity[item.rarity] = (runLootByRarity[item.rarity] || 0) + 1;
+          const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+          player.invuln = Math.max(player.invuln, invulnDur);
+          lootPickupCooldown = 0;
+          beep({ freq: 300, dur: 0.035, type: "square", gain: 0.045 });
+          break;
         }
-        if (!skipCompare) openCompare(L);
+        if (invFullLoot) break;
+        if (addToInventory(item)) {
+          lootDrops.splice(i, 1);
+          lootCount++;
+          runLootByRarity[item.rarity] = (runLootByRarity[item.rarity] || 0) + 1;
+          const invulnDur = Math.min(3, 1 + (player.lootInvulnSec || 0));
+          player.invuln = Math.max(player.invuln, invulnDur);
+          lootPickupCooldown = 0;
+          beepLoot(item.rarity);
+        }
         break;
       }
     }
@@ -6899,6 +8619,250 @@
     ctx.restore();
   }
 
+  // Biome 2: Forest/grassland – soft grass tiles with subtle variation and worn paths.
+  function drawGrassFloor(){
+    const tile = 56 * PX;
+    const gap = Math.max(1, 1.2 * PX);
+    const cols = Math.ceil(mapW / tile) + 1;
+    const rows = Math.ceil(mapH / tile) + 1;
+    const centerX = mapW / 2, centerY = mapH / 2;
+    const pathR = tile * 5.5;
+    ctx.save();
+    function tileHash(i, j){ let v = (i * 73856093) ^ (j * 19349663); v = (v ^ (v >>> 13)) * 1274126177; return (v >>> 0); }
+    const baseShades = ["#325b2b", "#2c5225", "#285020", "#304c26"];
+    ctx.fillStyle = "#1d301a";
+    ctx.fillRect(0, 0, mapW, mapH);
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
+        const x = i * tile + gap;
+        const y = j * tile + gap;
+        const size = tile - gap * 2;
+        const cx = x + size / 2;
+        const cy = y + size / 2;
+        const h = tileHash(i, j);
+        const shadeIdx = h % baseShades.length;
+        let baseColor = baseShades[shadeIdx];
+        const vary = 0.9 + (h % 23) / 200;
+        baseColor = baseColor.replace(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i, (_, r, g, b) => {
+          const vr = Math.min(255, Math.round(parseInt(r, 16) * vary));
+          const vg = Math.min(255, Math.round(parseInt(g, 16) * vary));
+          const vb = Math.min(255, Math.round(parseInt(b, 16) * vary));
+          return "#" + vr.toString(16).padStart(2,"0") + vg.toString(16).padStart(2,"0") + vb.toString(16).padStart(2,"0");
+        });
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.9);
+        g.addColorStop(0, baseColor);
+        g.addColorStop(1, "#182616");
+        ctx.fillStyle = g;
+        ctx.fillRect(x, y, size, size);
+        // Trampled path ring around center (slightly lighter/drier grass)
+        const dCenter = Math.hypot(cx - centerX, cy - centerY);
+        const pathFrac = Math.max(0, 1 - Math.abs(dCenter - pathR) / (pathR * 0.8));
+        if (pathFrac > 0) {
+          ctx.fillStyle = "rgba(185, 164, 112," + (0.12 * pathFrac) + ")";
+          ctx.fillRect(x, y, size, size);
+        }
+        // Occasional dirt patches
+        if ((h >>> 7) % 37 === 3) {
+          const dirtG = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.6);
+          dirtG.addColorStop(0, "rgba(120, 92, 60,0.85)");
+          dirtG.addColorStop(1, "rgba(54, 38, 24,0)");
+          ctx.fillStyle = dirtG;
+          ctx.fillRect(x, y, size, size);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // Biome 2: Forest decor – trees, stumps, flowers, small cabins (no collision yet, atmosphere only).
+  function drawForestDecor(){
+    if (mapW <= 0 || mapH <= 0) return;
+    const tile = 96 * PX;
+    const cols = Math.ceil(mapW / tile);
+    const rows = Math.ceil(mapH / tile);
+    function cellHash(i, j){ let v = (i * 912881) ^ (j * 715225); v = (v ^ (v >>> 13)) * 1103515245; return (v >>> 0); }
+    ctx.save();
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
+        const h = cellHash(i, j);
+        const baseX = i * tile;
+        const baseY = j * tile;
+        const localX = baseX + (h % (tile * 0.6));
+        const localY = baseY + ((h >>> 5) % (tile * 0.6));
+        const choice = h % 11;
+        // Keep center area a bit clearer for combat space.
+        const cx = mapW / 2, cy = mapH / 2;
+        const dCenter = Math.hypot(localX - cx, localY - cy);
+        if (dCenter < tile * 2.2 && choice !== 0) continue;
+        if (choice <= 4) {
+          // Tall pine tree
+          const trunkH = 34 * PX;
+          const trunkW = 6 * PX;
+          ctx.fillStyle = "rgba(60,40,28,0.96)";
+          ctx.fillRect(localX, localY, trunkW, trunkH);
+          const crownR = 22 * PX;
+          const levels = 3;
+          for (let k = 0; k < levels; k++) {
+            const ly = localY - k * (crownR * 0.6);
+            const lr = crownR * (1 - k * 0.15);
+            const grad = ctx.createRadialGradient(localX + trunkW / 2, ly, 0, localX + trunkW / 2, ly, lr);
+            grad.addColorStop(0, "rgba(60,110,60,0.98)");
+            grad.addColorStop(1, "rgba(25,45,25,0.98)");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(localX + trunkW / 2, ly, lr, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (choice <= 6) {
+          // Tree stump
+          const r = 12 * PX;
+          const g = ctx.createRadialGradient(localX, localY, 0, localX, localY, r);
+          g.addColorStop(0, "rgba(143,104,60,0.96)");
+          g.addColorStop(1, "rgba(74,48,26,0.96)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(localX, localY, r, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (choice <= 8) {
+          // Flower patch
+          const count = 4 + (h % 4);
+          for (let n = 0; n < count; n++) {
+            const fx = localX + ((h >>> (7 + n)) % 18) - 9 * PX;
+            const fy = localY + ((h >>> (11 + n)) % 18) - 9 * PX;
+            ctx.fillStyle = ["#ffd6e0", "#ffeaa7", "#a4e4ff", "#d1ffb8"][ (h >>> (13 + n)) % 4 ];
+            ctx.beginPath();
+            ctx.arc(fx, fy, 3 * PX, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (choice === 9) {
+          // Small timber cabin
+          const w = 64 * PX, hCab = 42 * PX;
+          const x = localX, y = localY - hCab;
+          const bodyGrad = ctx.createLinearGradient(x, y, x, y + hCab);
+          bodyGrad.addColorStop(0, "#6e4b2b");
+          bodyGrad.addColorStop(1, "#3d2615");
+          ctx.fillStyle = bodyGrad;
+          roundRect(x, y, w, hCab, 6 * PX);
+          ctx.fill();
+          // Roof
+          ctx.fillStyle = "#2c1a10";
+          ctx.beginPath();
+          ctx.moveTo(x - 4 * PX, y + 4 * PX);
+          ctx.lineTo(x + w / 2, y - 18 * PX);
+          ctx.lineTo(x + w + 4 * PX, y + 4 * PX);
+          ctx.closePath();
+          ctx.fill();
+          // Door light
+          const doorW = 14 * PX, doorH = 24 * PX;
+          const dx = x + w * 0.6, dy = y + hCab - doorH;
+          const doorG = ctx.createLinearGradient(dx, dy, dx, dy + doorH);
+          doorG.addColorStop(0, "#f8e1aa");
+          doorG.addColorStop(1, "#d9a45c");
+          ctx.fillStyle = doorG;
+          roundRect(dx, dy, doorW, doorH, 3 * PX);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // Biome 3: Sewers – scrolling tunnel floor with central sludge channel. Tunnel = center 2/3 width, full height.
+  function drawSewerFloor(gameTimeSeconds){
+    if (mapW <= 0 || mapH <= 0) return;
+    const tb = getTunnelBounds();
+    const tunnelW = tb ? (tb.right - tb.left) : mapW;
+    const tunnelLeft = tb ? tb.left : 0;
+    ctx.save();
+    // Full map black (sides of tunnel when narrow)
+    ctx.fillStyle = "#05070a";
+    ctx.fillRect(0, 0, mapW, mapH);
+    const tileH = 72 * PX;
+    const scroll = (gameTimeSeconds * 28 * PX) % tileH;
+    const channelW = tunnelW * 0.36;
+    const channelXLocal = (tunnelW - channelW) / 2;
+    const channelX = tunnelLeft + channelXLocal;
+    const rows = Math.ceil(mapH / tileH) + 2;
+    for (let j = -1; j < rows; j++) {
+      const y = j * tileH + scroll - tileH;
+      // Walkways left/right of channel (within tunnel band)
+      ctx.fillStyle = "#2b3036";
+      ctx.fillRect(tunnelLeft, y, channelXLocal, tileH);
+      ctx.fillRect(channelX + channelW, y, tunnelLeft + tunnelW - (channelX + channelW), tileH);
+      // Sludge channel
+      const sludgeG = ctx.createLinearGradient(channelX, y, channelX + channelW, y + tileH);
+      sludgeG.addColorStop(0, "#264f3a");
+      sludgeG.addColorStop(0.5, "#1a3a2b");
+      sludgeG.addColorStop(1, "#12261f");
+      ctx.fillStyle = sludgeG;
+      ctx.fillRect(channelX, y, channelW, tileH);
+      // Grime streaks on walkways
+      ctx.fillStyle = "rgba(20,24,30,0.82)";
+      const streakCount = 3;
+      for (let s = 0; s < streakCount; s++) {
+        const sxLocal = (s === 0 ? channelXLocal * 0.35 : (s === 1 ? channelXLocal * 0.7 : channelXLocal * 0.9));
+        const sw = 10 * PX;
+        ctx.fillRect(tunnelLeft + sxLocal, y, sw, tileH);
+        ctx.fillRect(tunnelLeft + tunnelW - sxLocal - sw, y, sw, tileH);
+      }
+    }
+    const edgeW = 8 * PX;
+    const edgeG = ctx.createLinearGradient(channelX - edgeW, 0, channelX + edgeW, 0);
+    edgeG.addColorStop(0, "rgba(15,18,20,0)");
+    edgeG.addColorStop(0.5, "rgba(90,150,130,0.4)");
+    edgeG.addColorStop(1, "rgba(15,18,20,0)");
+    ctx.fillStyle = edgeG;
+    ctx.fillRect(channelX - edgeW, 0, edgeW * 2, mapH);
+    const edgeG2 = ctx.createLinearGradient(channelX + channelW - edgeW, 0, channelX + channelW + edgeW, 0);
+    edgeG2.addColorStop(0, "rgba(15,18,20,0)");
+    edgeG2.addColorStop(0.5, "rgba(90,150,130,0.4)");
+    edgeG2.addColorStop(1, "rgba(15,18,20,0)");
+    ctx.fillStyle = edgeG2;
+    ctx.fillRect(channelX + channelW - edgeW, 0, edgeW * 2, mapH);
+    ctx.restore();
+  }
+
+  // Biome 3: Sewers decor – pipes, wall lights within tunnel band only (visual only, no collision).
+  function drawSewerDecor(){
+    if (mapW <= 0 || mapH <= 0) return;
+    const tb = getTunnelBounds();
+    const tunnelW = tb ? (tb.right - tb.left) : mapW;
+    const tunnelLeft = tb ? tb.left : 0;
+    ctx.save();
+    const pipeCount = 6;
+    for (let i = 0; i < pipeCount; i++) {
+      const x = tunnelLeft + (i + 0.3) / (pipeCount + 1) * tunnelW;
+      const y = (i % 2 === 0 ? mapH * 0.22 : mapH * 0.78);
+      const w = tunnelW * 0.12;
+      const h = 16 * PX;
+      const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+      grad.addColorStop(0, "#181c21");
+      grad.addColorStop(0.5, "#3f4954");
+      grad.addColorStop(1, "#0e1115");
+      ctx.fillStyle = grad;
+      roundRect(x, y, w, h, 6 * PX);
+      ctx.fill();
+    }
+    const lampCount = 7;
+    for (let i = 0; i < lampCount; i++) {
+      const x = tunnelLeft + (i + 0.5) / lampCount * tunnelW;
+      const y = mapH * 0.08;
+      const r = 7 * PX;
+      ctx.fillStyle = "#16181d";
+      ctx.beginPath();
+      ctx.arc(x, y, r + 2 * PX, 0, Math.PI * 2);
+      ctx.fill();
+      const lg = ctx.createRadialGradient(x, y, 0, x, y, r);
+      lg.addColorStop(0, "rgba(255,240,200,0.95)");
+      lg.addColorStop(1, "rgba(255,240,200,0.05)");
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   // Fountain collision: same radius as drawn pool (solid obstacle)
   const FOUNTAIN_R = 80 * 1.4 * 1;  // *PX applied when used
   let fountainDecorKind = "duck";   // "duck" for easy; "skull" reserved for hard mode later
@@ -6917,38 +8881,56 @@
     return { x, y };
   }
 
-  function pushOutOfCircle(x, y, entityR, cx, cy, cr){
-    const d = Math.hypot(x - cx, y - cy) || 1;
-    const minDist = cr + entityR;
-    if (d < minDist) {
-      const scale = minDist / d;
-      return { x: cx + (x - cx) * scale, y: cy + (y - cy) * scale };
-    }
-    return { x, y };
+  function circleIntersectsAxisAlignedRect(cx, cy, cr, rx, ry, rw, rh){
+    const px = clamp(cx, rx, rx + rw);
+    const py = clamp(cy, ry, ry + rh);
+    const dx = cx - px, dy = cy - py;
+    return dx * dx + dy * dy < cr * cr;
   }
-  function pushOutOfManholes(x, y, entityR){
-    let px = x, py = y;
-    for (const m of manholes) {
-      const out = pushOutOfCircle(px, py, entityR, m.x, m.y, m.r);
-      px = out.x; py = out.y;
-    }
-    return { x: px, y: py };
+  /** Shops, benches, flower pots, planters — anything in mallProps with a footprint blocks like a building. */
+  function mallPropIsSolidObstacle(p){
+    return p && typeof p.w === "number" && typeof p.h === "number" && p.w > 0 && p.h > 0;
   }
 
+  /** Player + enemy shots vs solid mall props (same set as movement). */
+  function circleHitsMallShopWall(cx, cy, cr){
+    for (const p of mallProps) {
+      if (!mallPropIsSolidObstacle(p)) continue;
+      if (circleIntersectsAxisAlignedRect(cx, cy, cr, p.x, p.y, p.w, p.h)) return true;
+    }
+    return false;
+  }
+
+  /** Circle vs axis-aligned rect: push circle center so it does not overlap the solid rectangle. Handles interior (d=0) correctly. */
   function pushOutOfRect(px, py, entityR, rx, ry, rw, rh){
-    const cx = clamp(px, rx, rx + rw);
-    const cy = clamp(py, ry, ry + rh);
-    const d = Math.hypot(px - cx, py - cy) || 1;
-    const minDist = entityR + 2*PX;
-    if (d < minDist) {
-      const scale = minDist / d;
-      return { x: cx + (px - cx) * scale, y: cy + (py - cy) * scale };
+    const qx = clamp(px, rx, rx + rw);
+    const qy = clamp(py, ry, ry + rh);
+    const dx = px - qx;
+    const dy = py - qy;
+    const d = Math.hypot(dx, dy);
+    const eps = 1e-5;
+    if (d < eps) {
+      const dl = px - rx;
+      const dr = rx + rw - px;
+      const dt = py - ry;
+      const db = ry + rh - py;
+      const m = Math.min(dl, dr, dt, db);
+      if (m === dl) return { x: rx - entityR, y: py };
+      if (m === dr) return { x: rx + rw + entityR, y: py };
+      if (m === dt) return { x: px, y: ry - entityR };
+      return { x: px, y: ry + rh + entityR };
+    }
+    if (d < entityR) {
+      const s = entityR / d;
+      return { x: qx + dx * s, y: qy + dy * s };
     }
     return { x: px, y: py };
   }
+  /** Push out of every solid mall prop (shops + benches, pots, plants). */
   function pushOutOfMallProps(x, y, entityR){
     let px = x, py = y;
     for (const p of mallProps) {
+      if (!mallPropIsSolidObstacle(p)) continue;
       const out = pushOutOfRect(px, py, entityR, p.x, p.y, p.w, p.h);
       px = out.x; py = out.y;
     }
@@ -7373,10 +9355,14 @@
       roundRect(x - w/2 + 4*PX, y - h/2 + 4*PX, w - 8*PX, h - 8*PX, 4 * PX);
       ctx.fill();
     };
-    drawDoor(mapW / 2, d, false);           // north
-    drawDoor(mapW / 2, mapH - d, false);   // south
-    drawDoor(d, mapH / 2, true);            // west
-    drawDoor(mapW - d, mapH / 2, true);     // east
+    const tb = getTunnelBounds();
+    const doorX = tb ? (tb.left + tb.right) / 2 : mapW / 2;
+    drawDoor(doorX, d, false);           // north (goal end in tunnel)
+    drawDoor(doorX, mapH - d, false);   // south (start in tunnel)
+    if (!tb) {
+      drawDoor(d, mapH / 2, true);            // west
+      drawDoor(mapW - d, mapH / 2, true);     // east
+    }
     ctx.restore();
   }
 
@@ -7430,10 +9416,19 @@
       ctx.scale(worldScale, worldScale);
       ctx.translate(-player.x, -player.y);
       if (mapW > 0 && mapH > 0) {
-        drawMallFloorPlaceholder();
-        drawFountain();
-        drawDrains();
-        drawMallProps();
+        const biome = currentLevelConfig ? currentLevelConfig.biome : 1;
+        if (biome === 2) {
+          drawGrassFloor();
+          drawForestDecor();
+        } else if (biome === 3) {
+          drawSewerFloor(gameTime);
+          drawSewerDecor();
+        } else {
+          drawMallFloorPlaceholder();
+          drawFountain();
+          drawDrains();
+          drawMallProps();
+        }
         drawDoors();
         drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, worldScale);
       }
@@ -7442,6 +9437,7 @@
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
       for(const p of enemyProjectiles) drawEnemyProjectile(p);
+      drawBiome1Skeletons();
       for(const e of enemies) drawEnemy(e);
       for(const p of particles) drawParticle(p);
       if(extractionFlameRing){
@@ -7494,10 +9490,19 @@
       ctx.save();
       ctx.translate(camOffsetX, camOffsetY);
       if (mapW > 0 && mapH > 0) {
-        drawMallFloorPlaceholder();
-        drawFountain();
-        drawDrains();
-        drawMallProps();
+        const biome = currentLevelConfig ? currentLevelConfig.biome : 1;
+        if (biome === 2) {
+          drawGrassFloor();
+          drawForestDecor();
+        } else if (biome === 3) {
+          drawSewerFloor(gameTime);
+          drawSewerDecor();
+        } else {
+          drawMallFloorPlaceholder();
+          drawFountain();
+          drawDrains();
+          drawMallProps();
+        }
         drawDoors();
         drawBlackOutsideMapScreenSpace(camOffsetX, camOffsetY, 1);
       }
@@ -7506,12 +9511,14 @@
       for(const o of orbs) drawOrb(o);
       for(const b of bullets) drawBullet(b);
       for(const p of enemyProjectiles) drawEnemyProjectile(p);
+      drawBiome1Skeletons();
       for(const e of enemies) drawEnemy(e);
       for(const p of particles) drawParticle(p);
       for(const ring of levelUpRings) drawLevelUpRing(ring);
       drawBloodGatherBar();
       drawLevel11WeldBar();
       if(deathSequence) drawCorpse(); else drawPlayer();
+      drawBladeSwipes();
       for(const pop of tokenPops) drawTokenPop(pop);
       ctx.restore();
     }
@@ -7624,6 +9631,29 @@
         ctx.font = `${fontSize}px ${LEVEL11_DIALOGUE_FONT}`;
         ctx.fillStyle = "rgba(234, 242, 255, 0.92)";
         lines.forEach((line, i) => { ctx.fillText(line, bubbleX + 16, y + 44 + i * lineH); });
+        ctx.restore();
+      }
+
+      // Biome 3 (Sewers): global dim + intermittent flicker, like brief power cuts.
+      if(currentLevelConfig && currentLevelConfig.biome === 3){
+        const t = gameTime || 0;
+        // Base dim
+        let alpha = 0.55;
+        // Short, irregular flickers – every ~4–7 seconds, lights drop for a split second.
+        const period = 5.4;
+        const phase = (t % period);
+        if (phase < 0.18) {
+          // Hard blackout at start of each period
+          alpha = 0.88 - (phase / 0.18) * 0.25;
+        } else if (phase > 2.1 && phase < 2.5) {
+          // Secondary micro-flicker
+          const local = (phase - 2.1) / 0.4;
+          alpha += 0.12 * (1 - Math.abs(local - 0.5) * 2);
+        }
+        ctx.save();
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.fillStyle = `rgba(4, 8, 14, ${alpha})`;
+        ctx.fillRect(0, 0, W, H);
         ctx.restore();
       }
     }
@@ -7884,6 +9914,7 @@
     const hpPct=clamp(e.hp/e.maxHP,0,1);
     const isBoss = e.boss;
     const isSkMouse = e.kind === "skitteringMouse";
+    const isDog = e.kind === "dog";
 
     // Shadow
     ctx.save();
@@ -7895,13 +9926,13 @@
     ctx.restore();
 
     const spriteReady = (img) => img && img.complete && img.naturalWidth > 0;
-    const hasMoveFrames = spriteReady(skMouseSprites.move1) && spriteReady(skMouseSprites.move2);
-    const hasAnySprite = spriteReady(skMouseSprites.base) || hasMoveFrames;
-    if (isSkMouse && hasAnySprite) {
+    const hasMouseMoveFrames = spriteReady(skMouseSprites.move1) && spriteReady(skMouseSprites.move2);
+    const hasAnyMouseSprite = spriteReady(skMouseSprites.base) || hasMouseMoveFrames;
+    if (isSkMouse && hasAnyMouseSprite) {
       // Only move1 and move2 (2-frame run loop); no gape frame.
       const t = now()*0.001 + (e.animOffset || 0);
       let img = null;
-      if (hasMoveFrames) {
+      if (hasMouseMoveFrames) {
         const phase = Math.floor(t*10)%2;
         img = phase === 0 ? skMouseSprites.move1 : skMouseSprites.move2;
       } else if (spriteReady(skMouseSprites.base)) {
@@ -7921,6 +9952,27 @@
         ctx.textBaseline = "middle";
         ctx.fillStyle = "rgba(255,255,255,0.92)";
         ctx.fillText(e.icon, e.x, e.y + 1*PX);
+        ctx.restore();
+      }
+    } else if (isDog && spriteReady(dogSprites.move1) && spriteReady(dogSprites.move2)) {
+      // Dog: 2-frame run loop, slightly larger footprint than mice.
+      const t = now()*0.001 + (e.animOffset || 0);
+      const phase = Math.floor(t*8)%2;
+      const img = phase === 0 ? dogSprites.move1 : dogSprites.move2;
+      if (spriteReady(img)) {
+        const size = e.r*5.4;
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, e.x - size/2, e.y - size/2, size, size);
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.font = `${22*PX}px ui-sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.fillText("🐕", e.x, e.y + 1*PX);
         ctx.restore();
       }
     } else {
@@ -7970,7 +10022,16 @@
   }
 
   function drawBullet(b){
-    const col = b.crit ? "rgba(255,210,77,0.95)" : "rgba(124,255,178,0.95)";
+    let col;
+    if(b.crit){
+      col = "rgba(255,210,77,0.95)";
+    } else if(b.projKind === "laser"){
+      col = "rgba(255,55,95,0.96)";
+    } else if(b.projKind === "cannon"){
+      col = "rgba(255,165,60,0.95)";
+    } else {
+      col = "rgba(140,200,255,0.96)";
+    }
     glowCircle(b.x,b.y,b.r,col,0.20,18);
     ctx.save();
     ctx.fillStyle=col;
@@ -7978,6 +10039,36 @@
     ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
     ctx.fill();
     ctx.restore();
+  }
+
+  function drawBladeSwipes(){
+    if(!bladeSwipes.length) return;
+    const inner = player.r + 2 * PX;
+    const halfArc = BASE.bladeHalfArc;
+    for(const sw of bladeSwipes){
+      const reach = (sw.meleeKind === "axe" ? BASE.axeReach : BASE.bladeReach) * PX;
+      const outer = inner + reach;
+      const ang = Math.atan2(sw.uy, sw.ux);
+      const a0 = ang - halfArc;
+      const a1 = ang + halfArc;
+      const fade = clamp(1 - 0.92 * (sw.t / sw.maxT), 0, 1);
+      const axe = sw.meleeKind === "axe";
+      ctx.save();
+      ctx.globalAlpha = fade * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(player.x + Math.cos(a0) * inner, player.y + Math.sin(a0) * inner);
+      ctx.arc(player.x, player.y, outer, a0, a1, false);
+      ctx.lineTo(player.x + Math.cos(a1) * inner, player.y + Math.sin(a1) * inner);
+      ctx.arc(player.x, player.y, inner, a1, a0, true);
+      ctx.closePath();
+      ctx.fillStyle = axe ? "rgba(255,210,160,0.4)" : "rgba(210,230,255,0.42)";
+      ctx.fill();
+      ctx.globalAlpha = fade * 0.88;
+      ctx.strokeStyle = axe ? "rgba(255,200,120,0.82)" : "rgba(255,255,255,0.78)";
+      ctx.lineWidth = 2.2 * PX;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function drawEnemyProjectile(p){
@@ -8005,7 +10096,8 @@
 
   function drawLoot(L){
     const it=L.item;
-    const c=RAR[it.rarity].color;
+    const rarKey = it.rarity && RAR[it.rarity] ? it.rarity : "common";
+    const c = RAR[rarKey].color;
     const t=(L.t||0)+L.bob;
     const sizePulse=1+0.075*Math.sin(t*4);
     const baseR=L.r*1.5;
@@ -8028,16 +10120,40 @@
     ctx.fillStyle="rgba(255,255,255,0.96)";
     ctx.fillText(it.icon, 0, 1*PX);
 
+    const rawName = (it.name && String(it.name).trim()) || it.type || "Loot";
+    const nameFontPx = Math.max(9, 11 * PX * 1.1);
+    ctx.font = `600 ${nameFontPx}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    const maxNameW = Math.max(72 * PX, r * 4.8);
+    let displayName = rawName;
+    if (ctx.measureText(displayName).width > maxNameW) {
+      const ell = "…";
+      let s = rawName;
+      while (s.length > 1 && ctx.measureText(s + ell).width > maxNameW) s = s.slice(0, -1);
+      displayName = s + ell;
+    }
+    const nameY = -r - 6 * PX;
+    ctx.globalAlpha = 1;
+    const nameCol = RARITY_LOOT_NAME_HEX[rarKey] || RARITY_LOOT_NAME_HEX.common;
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = Math.max(2, 2.5 * PX);
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    ctx.fillStyle = nameCol;
+    ctx.strokeText(displayName, 0, nameY);
+    ctx.fillText(displayName, 0, nameY);
+
     if(L.devGift){
-      ctx.font = `${12*PX}px ui-sans-serif`;
+      ctx.font = `${10 * PX}px ui-sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       ctx.fillStyle = "rgba(255,255,255,0.98)";
       ctx.strokeStyle = "rgba(0,0,0,0.8)";
       ctx.lineWidth = 2 * PX;
-      const labelY = -r - 8*PX;
-      ctx.strokeText("Gift from dev❤️", 0, labelY);
-      ctx.fillText("Gift from dev❤️", 0, labelY);
+      const giftY = nameY - nameFontPx - 4 * PX;
+      ctx.strokeText("Gift from dev❤️", 0, giftY);
+      ctx.fillText("Gift from dev❤️", 0, giftY);
     }
 
     ctx.restore();
@@ -8048,7 +10164,10 @@
     const ageSec = (now() - pool.spawnT) / 1000;
     const coagulated = !!pool.coagulated;
     const expired = !!pool.expired;
-    const stageIndex = Math.min(4, Math.floor(ageSec / 2));
+    const tm = pool.bloodTimeMult > 0 ? pool.bloodTimeMult : 1;
+    const maxAge = BLOOD_POOL_MAX_AGE_SEC * tm;
+    const stageDur = maxAge / BLOOD_POOL_COLOR_STAGES.length;
+    const stageIndex = Math.min(BLOOD_POOL_COLOR_STAGES.length - 1, Math.floor(ageSec / stageDur));
     const col = expired ? "#0d0000" : (BLOOD_POOL_COLOR_STAGES[stageIndex] || pool.bloodTypeColor || "#c0392b");
     ctx.save();
     ctx.globalAlpha = expired ? 0.7 : 0.96;
@@ -8079,37 +10198,45 @@
   }
 
   function drawBloodGatherBar(){
-    if(!gatheringPool) return;
     const R = BLOOD_GATHER_RADIUS * PX;
-    if(dist2(gatheringPool.x, gatheringPool.y, player.x, player.y) >= R * R) return;
-    const t = clamp(gatheringAccumulatedMs / (BLOOD_GATHER_SEC * 1000), 0, 1);
+    const R2 = R * R;
     const bw = 72 * PX;
     const bh = 12 * PX;
-    const poolR = gatheringPool.mainR != null ? gatheringPool.mainR : 14 * PX;
-    const x = gatheringPool.x - bw / 2;
-    const y = gatheringPool.y - poolR - 28 * PX;
-    const fillW = bw * (1 - t);
-    ctx.save();
-    try {
-      ctx.beginPath();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "rgba(0,0,0,0.85)";
-      ctx.strokeStyle = "rgba(255,255,255,0.9)";
-      ctx.lineWidth = 3 * PX;
-      roundRect(x, y, bw, bh, 999);
-      ctx.fill();
-      ctx.stroke();
-      if(fillW > 3 * PX){
-        const innerW = fillW - 2 * PX;
-        if(innerW > 0){
-          ctx.fillStyle = "rgba(255,240,200,0.98)";
-          roundRect(x + (bw - fillW), y + 2*PX, innerW, bh - 4*PX, 999);
-          ctx.fill();
+    const vGap = 6 * PX;
+    let stack = 0;
+    for (let idx = 0; idx < bloodPools.length; idx++) {
+      const pool = bloodPools[idx];
+      if (pool.gathered || pool.expired || !pool.coagulated) continue;
+      if (dist2(pool.x, pool.y, player.x, player.y) >= R2) continue;
+      if (bloodPoolBlockedByOverlappingAbove(idx)) continue;
+      const t = clamp((pool.gatherMs || 0) / (BLOOD_GATHER_SEC * 1000), 0, 1);
+      const poolR = pool.mainR != null ? pool.mainR : 14 * PX;
+      const x = pool.x - bw / 2;
+      const y = pool.y - poolR - 28 * PX - stack * (bh + vGap);
+      stack++;
+      const fillW = bw * (1 - t);
+      ctx.save();
+      try {
+        ctx.beginPath();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 3 * PX;
+        roundRect(x, y, bw, bh, 999);
+        ctx.fill();
+        ctx.stroke();
+        if (fillW > 3 * PX) {
+          const innerW = fillW - 2 * PX;
+          if (innerW > 0) {
+            ctx.fillStyle = "rgba(255,240,200,0.98)";
+            roundRect(x + (bw - fillW), y + 2 * PX, innerW, bh - 4 * PX, 999);
+            ctx.fill();
+          }
         }
+      } finally {
+        ctx.restore();
+        ctx.beginPath();
       }
-    } finally {
-      ctx.restore();
-      ctx.beginPath();
     }
   }
 

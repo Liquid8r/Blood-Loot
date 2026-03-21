@@ -89,8 +89,31 @@
           <div class="inventoryGridLabel">Backpack</div>
           <div class="inventoryGrid" id="inventoryGrid"></div>
         </div>
+        <div class="invScrapWrap">
+          <div class="inventoryGridLabel">Scrap</div>
+          <div id="inventoryScrapDrop" class="invScrapDrop" title="Drop item to scrap">🔧</div>
+          <div id="inventoryScrapHint" class="invScrapHint">Drop item to scrap</div>
+        </div>
       </div>
       <div id="inventoryStatsPanel" class="inventoryStatsPanel"></div>
+    </div>
+    <div id="inventoryScrapConfirm" class="invScrapConfirm hidden" aria-hidden="true">
+      <div class="invScrapConfirmCard" role="dialog" aria-labelledby="inventoryScrapConfirmTitle">
+        <div id="inventoryScrapConfirmTitle" class="invScrapConfirmTitle"></div>
+        <div id="inventoryScrapConfirmBody" class="invScrapConfirmBody"></div>
+        <div class="invScrapConfirmFooter">
+          <div id="inventoryScrapEquippedWarn" class="invScrapEquippedWarn hidden" title="Removes this piece from your character">
+            <svg class="invScrapWarnSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 48" width="38" height="32" aria-hidden="true" focusable="false">
+              <polygon points="28,2 54,46 2,46" fill="#d32f2f" stroke="#ff8a80" stroke-width="1.2" stroke-linejoin="round"/>
+              <text x="28" y="40" text-anchor="middle" fill="#fff" font-size="22" font-weight="900" font-family="system-ui,Segoe UI,sans-serif">!</text>
+            </svg>
+          </div>
+          <div class="invScrapConfirmBtns">
+            <button type="button" class="invScrapConfirmBtn invScrapConfirmYes" id="inventoryScrapConfirmYes">Confirm</button>
+            <button type="button" class="invScrapConfirmBtn invScrapConfirmNo" id="inventoryScrapConfirmNo">Cancel</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   <!-- Global item tooltip: used by inventory and armory -->
