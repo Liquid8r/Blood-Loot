@@ -18,6 +18,8 @@ Dette prosjektet er basert på **Affix Loot v1.002** (fallback: åpne mappen «A
 - **Spillet:** Skal være på **engelsk** (menyer, tooltips, beskrivelser).
 - **Samtale:** Vi snakker sammen på **norsk**.
 
+**Godot-sporet:** Samme språkregler og øvrige «videreførte sannheter» står samlet i **`blood-loot-godot/docs/CARRYOVER-TRUTHS.md`** (oppdateres når vi endrer bevisst).
+
 ---
 
 ## Avtaler (merge)

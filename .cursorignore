@@ -1,0 +1,5 @@
+﻿# Keep Cursor indexing fast; source and docs stay indexed.
+
+node_modules/
+blood-loot-godot/.godot/
+blood-loot-godot/export/

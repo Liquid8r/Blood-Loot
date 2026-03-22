@@ -1,0 +1,136 @@
+[gd_scene load_steps=2 format=3 uid="uid://bloodloot_hub"]
+
+[ext_resource type="Script" path="res://scripts/hub/hub_root.gd" id="1_hub"]
+
+[node name="Hub" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_hub")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+color = Color(0.02, 0.04, 0.08, 1)
+
+[node name="HubPlane" type="Control" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+custom_minimum_size = Vector2(1536, 1024)
+
+[node name="TexBg" type="TextureRect" parent="HubPlane"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture_filter = 0
+stretch_mode = 6
+
+[node name="TexHighlight" type="TextureRect" parent="HubPlane"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture_filter = 0
+stretch_mode = 6
+
+[node name="HitDetector" type="Control" parent="HubPlane"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="VolumePanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -132.0
+offset_right = -12.0
+offset_bottom = -12.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="Margin" type="MarginContainer" parent="VolumePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="VolumePanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="MusicRow" type="HBoxContainer" parent="VolumePanel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="MusicLabel" type="Label" parent="VolumePanel/Margin/VBox/MusicRow"]
+layout_mode = 2
+text = "Music"
+custom_minimum_size = Vector2(100, 0)
+
+[node name="MusicSlider" type="HSlider" parent="VolumePanel/Margin/VBox/MusicRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+
+[node name="MusicPct" type="Label" parent="VolumePanel/Margin/VBox/MusicRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "28%"
+custom_minimum_size = Vector2(40, 0)
+
+[node name="SfxRow" type="HBoxContainer" parent="VolumePanel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SfxLabel" type="Label" parent="VolumePanel/Margin/VBox/SfxRow"]
+layout_mode = 2
+text = "Sound effects"
+custom_minimum_size = Vector2(100, 0)
+
+[node name="SfxSlider" type="HSlider" parent="VolumePanel/Margin/VBox/SfxRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+
+[node name="SfxPct" type="Label" parent="VolumePanel/Margin/VBox/SfxRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "100%"
+custom_minimum_size = Vector2(40, 0)
+
+[node name="MenuMusic" type="AudioStreamPlayer" parent="."]
+unique_name_in_owner = true
+bus = &"Master"
